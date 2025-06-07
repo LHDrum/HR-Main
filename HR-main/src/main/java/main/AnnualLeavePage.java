@@ -6,6 +6,7 @@ import javax.swing.border.TitledBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.awt.event.ActionListener;
+import java.math.BigDecimal;
 import java.text.DecimalFormat;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -39,6 +40,7 @@ public class AnnualLeavePage extends JPanel {
     private JButton btnUseSelectedDays;
 
     private final DecimalFormat leaveDayFormat = new DecimalFormat("#.##");
+    private final DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     public AnnualLeavePage(PayrollManager payrollManager) {
         this.payrollManager = payrollManager;
@@ -159,13 +161,17 @@ public class AnnualLeavePage extends JPanel {
     private JPanel createCalendarAndRecordPanel() {
         JPanel panel = new JPanel(new BorderLayout(10, 10));
 
-        calendarPanel = new CalendarPanel(days -> {}); // 콜백은 사용하지 않음
+        calendarPanel = new CalendarPanel(days -> {
+        }); // 콜백은 사용하지 않음
         panel.add(calendarPanel, BorderLayout.CENTER);
 
         JPanel usedPanel = new JPanel(new BorderLayout());
         usedPanel.setBorder(BorderFactory.createTitledBorder("연차 사용 기록"));
         usedLeaveTableModel = new DefaultTableModel(new String[]{"사용일자"}, 0) {
-            @Override public boolean isCellEditable(int row, int column) { return false; }
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
         };
         usedLeaveTable = new JTable(usedLeaveTableModel);
         usedPanel.add(new JScrollPane(usedLeaveTable), BorderLayout.CENTER);
@@ -217,15 +223,17 @@ public class AnnualLeavePage extends JPanel {
         btnApplySpecial.addActionListener(createAdjustmentListener("특별휴가", txtSpecialLeave));
 
         btnApplyManual.addActionListener(e -> {
-            if(currentEmployee == null) {
+            if (currentEmployee == null) {
                 JOptionPane.showMessageDialog(this, "먼저 직원을 조회해주세요.", "오류", JOptionPane.ERROR_MESSAGE);
                 return;
             }
             try {
-                double totalDays = Double.parseDouble(txtManualTotalLeave.getText());
+                // [수정] BigDecimal로 파싱
+                BigDecimal totalDays = new BigDecimal(txtManualTotalLeave.getText());
                 int confirm = JOptionPane.showConfirmDialog(this,
-                        "총 부여 연차를 " + totalDays + "일로 임의 설정하시겠습니까?\n(기존 자동계산 연차는 무시됩니다)", "임의 수정 확인", JOptionPane.YES_NO_OPTION);
+                        "총 부여 연차를 " + totalDays.toPlainString() + "일로 임의 설정하시겠습니까?\n(기존 자동계산 연차는 무시됩니다)", "임의 수정 확인", JOptionPane.YES_NO_OPTION);
                 if (confirm == JOptionPane.YES_OPTION) {
+                    // [수정] BigDecimal 전달
                     payrollManager.setTotalLeaveManually(currentEmployee.getId(), selectedYear, totalDays, "수동 설정");
                     loadAnnualLeaveData();
                     txtManualTotalLeave.setText("");
@@ -243,7 +251,8 @@ public class AnnualLeavePage extends JPanel {
                 return;
             }
             try {
-                double days = Double.parseDouble(field.getText());
+                // [수정] BigDecimal로 파싱 및 전달
+                BigDecimal days = new BigDecimal(field.getText());
                 payrollManager.applyLeaveAdjustment(currentEmployee.getId(), selectedYear, days, type);
                 loadAnnualLeaveData();
                 field.setText("");
@@ -299,34 +308,39 @@ public class AnnualLeavePage extends JPanel {
         this.currentEmployee = empOpt.get();
         this.selectedYear = (Integer) yearComboBox.getSelectedItem();
 
-        // 연차 계산 로직 호출 (DB에 없으면 생성/업데이트)
         payrollManager.calculateAndGrantAnnualLeave(currentEmployee, selectedYear);
 
-        // 정보 표시
-        Map<String, Double> summary = payrollManager.getAnnualLeaveSummary(currentEmployee.getId(), selectedYear);
-        double generated = summary.getOrDefault("generated", 0.0);
-        double adjustment = summary.getOrDefault("adjustment", 0.0);
-        double used = summary.getOrDefault("used", 0.0);
-        double total = generated + adjustment;
-        double remaining = total - used;
+        // [수정] double 대신 Map<String, BigDecimal>을 받음
+        Map<String, BigDecimal> summary = payrollManager.getAnnualLeaveSummary(currentEmployee.getId(), selectedYear);
+        BigDecimal generated = summary.getOrDefault("generated", BigDecimal.ZERO);
+        BigDecimal adjustment = summary.getOrDefault("adjustment", BigDecimal.ZERO);
+        BigDecimal used = summary.getOrDefault("used", BigDecimal.ZERO);
+        // [수정] BigDecimal 연산 사용
+        BigDecimal total = generated.add(adjustment);
+        BigDecimal remaining = total.subtract(used);
 
         lblEmployeeName.setText(currentEmployee.getName());
-        lblHireDate.setText(currentEmployee.getHireDate());
 
-        LocalDate hireDate = LocalDate.parse(currentEmployee.getHireDate());
-        long serviceYears = ChronoUnit.YEARS.between(hireDate, LocalDate.of(selectedYear, 12, 31));
-        lblServiceYears.setText(serviceYears + "년");
+        LocalDate hireDate = currentEmployee.getHireDate();
+        if (hireDate != null) {
+            lblHireDate.setText(hireDate.format(dateFormatter));
+            long serviceYears = ChronoUnit.YEARS.between(hireDate, LocalDate.of(selectedYear, 12, 31));
+            lblServiceYears.setText(serviceYears + "년");
+        } else {
+            lblHireDate.setText("-");
+            lblServiceYears.setText("-");
+        }
 
         String basis = payrollManager.loadSettings().getOrDefault("annualLeaveBasis", "FISCAL");
         lblLeaveBasis.setText("HIRE_DATE".equals(basis) ? "입사일 기준" : "회계연도 기준");
 
+        // [수정] BigDecimal 값을 포맷팅하여 표시
         lblGeneratedDays.setText(leaveDayFormat.format(generated) + " 일");
         lblAdjustmentDays.setText(leaveDayFormat.format(adjustment) + " 일");
         lblTotalGrantedDays.setText(leaveDayFormat.format(total) + " 일");
         lblUsedDays.setText(leaveDayFormat.format(used) + " 일");
         lblRemainingDays.setText(leaveDayFormat.format(remaining) + " 일");
 
-        // 사용기록 테이블 업데이트
         usedLeaveTableModel.setRowCount(0);
         List<LocalDate> usedDates = payrollManager.getLeaveUsageRecords(currentEmployee.getId(), selectedYear);
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd (E)");
@@ -353,7 +367,7 @@ public class AnnualLeavePage extends JPanel {
         employeeComboBox.removeAllItems();
         try {
             List<Employee> employees = payrollManager.getAllEmployees();
-            if (employees.isEmpty()){
+            if (employees.isEmpty()) {
                 employeeComboBox.addItem("등록된 직원이 없습니다.");
             } else {
                 employees.sort(Comparator.comparing(Employee::getName));

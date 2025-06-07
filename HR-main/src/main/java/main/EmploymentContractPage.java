@@ -6,12 +6,10 @@ import javax.swing.border.TitledBorder;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.math.BigDecimal;
 import java.text.DecimalFormat;
 import java.time.LocalDate;
-import java.time.Month;
-import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.Map;
 
 public class EmploymentContractPage extends JPanel {
@@ -320,7 +318,6 @@ public class EmploymentContractPage extends JPanel {
         panel.add(textField, gbc);
     }
 
-
     private void addLabelAndComponent(JPanel panel, String labelText, Component component, GridBagConstraints gbc, int x, int y, int gridwidth) {
         JLabel label = new JLabel(labelText); label.setFont(enlargedFont);
         gbc.gridx = x; gbc.gridy = y; gbc.gridwidth = 1; gbc.anchor = GridBagConstraints.EAST; gbc.fill = GridBagConstraints.NONE; gbc.weightx = 0;
@@ -329,7 +326,6 @@ public class EmploymentContractPage extends JPanel {
         gbc.gridx = x + 1; gbc.gridy = y; gbc.gridwidth = gridwidth; gbc.anchor = GridBagConstraints.WEST; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = (gridwidth > 1 ? 1.0 : 0.5);
         panel.add(component, gbc);
     }
-
 
     private void addListeners() {
         btnGoBack.addActionListener(e -> {
@@ -347,20 +343,17 @@ public class EmploymentContractPage extends JPanel {
         this.contractualPayroll = contractualPayroll;
         isProgrammaticChange = true;
 
-        // --- 설정값 로드 ---
         Map<String, String> settings = payrollApp.getPayrollManager().loadSettings();
         String companyName = settings.getOrDefault("companyName", "[주식회사 OO회사]");
         String defaultPayday = settings.getOrDefault("defaultPayday", "매월 25일");
 
-        // --- UI 컴포넌트에 설정값 적용 ---
         lblCompanyName.setText(companyName);
         txtWagePaymentDate.setText(defaultPayday);
         lblEmployerSign.setText("사업주 (회사명) : " + companyName + " (직인)");
 
 
         if (employee == null) {
-            clearAllFields(); // 필드 초기화
-            // 빈 계약서 양식의 회사명 업데이트
+            clearAllFields();
             if (lblIntro1 != null) {
                 lblIntro1.setText("<html><body style='text-align:center; font-family:\"" + enlargedHtmlFont.getFamily() + "\"; font-size:" + enlargedHtmlFont.getSize() + "pt;'>" +
                         companyName + " (이하 “회사”라 칭함)과 근로자 OOO (이하 “근로자”라 칭함)은 다음과 같이 근로계약을 체결한다.</body></html>");
@@ -379,7 +372,11 @@ public class EmploymentContractPage extends JPanel {
         lblAddressValue.setText(employee.getAddress());
         lblPhoneNumberValue.setText(employee.getPhoneNumber());
         lblDepartmentValue.setText(employee.getDepartment());
-        lblContractPeriodValue.setText(employee.getHireDate() != null ? employee.getHireDate() : "-");
+
+        LocalDate hireDate = employee.getHireDate();
+        // [오류 수정] LocalDate를 포매팅하여 String으로 변환 후 setText에 전달
+        lblContractPeriodValue.setText(hireDate != null ? hireDate.format(dateFormatter) : "-");
+
         lblWorkLocationValue.setText(employee.getWorkLocation() != null ? employee.getWorkLocation() : "-");
         lblSiteLocationValue.setText(employee.getSiteLocation() != null ? employee.getSiteLocation() : "-");
 
@@ -402,31 +399,18 @@ public class EmploymentContractPage extends JPanel {
             lblResearchDevelopmentExpenseValue.setText(zeroWon); lblChildcareAllowanceValue.setText(zeroWon);
         }
 
-        String effectiveStartDateStr = employee.getHireDate();
-        if (employee.getSalaryChangeDate() != null && !employee.getSalaryChangeDate().isEmpty()) {
-            try {
-                LocalDate.parse(employee.getSalaryChangeDate(), dateFormatter);
-                effectiveStartDateStr = employee.getSalaryChangeDate();
-            } catch (DateTimeParseException e) {
-                System.err.println("급여변동일(" + employee.getSalaryChangeDate() + ") 포맷 오류. 입사일을 계약 시작 기준으로 사용합니다.");
-            }
+        LocalDate effectiveStartDate = hireDate;
+        LocalDate salaryChangeDate = employee.getSalaryChangeDate();
+
+        if (salaryChangeDate != null) {
+            effectiveStartDate = salaryChangeDate;
         }
 
-        if (effectiveStartDateStr != null && !effectiveStartDateStr.isEmpty()) {
-            try {
-                LocalDate effectiveStartDate = LocalDate.parse(effectiveStartDateStr, dateFormatter);
-                txtContractStartDate.setText(dateFormatter.format(effectiveStartDate));
-                txtContractSignDate.setText(dateFormatter.format(effectiveStartDate));
-
-                LocalDate calculatedEndDate = effectiveStartDate.plusYears(1).minusDays(1);
-                txtContractEndDate.setText(dateFormatter.format(calculatedEndDate));
-
-            } catch (DateTimeParseException e) {
-                txtContractStartDate.setText(effectiveStartDateStr);
-                txtContractEndDate.setText("");
-                txtContractSignDate.setText(effectiveStartDateStr);
-                System.err.println("계약 시작일/종료일/체결일 설정 중 날짜 파싱 오류: " + effectiveStartDateStr);
-            }
+        if (effectiveStartDate != null) {
+            txtContractStartDate.setText(dateFormatter.format(effectiveStartDate));
+            txtContractSignDate.setText(dateFormatter.format(effectiveStartDate));
+            LocalDate calculatedEndDate = effectiveStartDate.plusYears(1).minusDays(1);
+            txtContractEndDate.setText(dateFormatter.format(calculatedEndDate));
         } else {
             txtContractStartDate.setText("");
             txtContractEndDate.setText("");
@@ -541,19 +525,16 @@ public class EmploymentContractPage extends JPanel {
     private void clearAllFields() {
         isProgrammaticChange = true;
 
-        // 직원 정보 초기화
         lblEmployeeNameValue.setText("-"); lblResidentRegNoValue.setText("-"); lblAddressValue.setText("-");
         lblPhoneNumberValue.setText("-"); lblDepartmentValue.setText("-");
         lblContractPeriodValue.setText("-");
         lblWorkLocationValue.setText("-"); lblSiteLocationValue.setText("-");
 
-        // 급여 정보 초기화
         String na = "- 원";
         lblAnnualSalaryValue.setText(na); lblMonthlyBasicSalaryValue.setText(na); lblFixedOvertimeAllowanceValue.setText(na);
         lblBonusValue.setText(na); lblOtherAllowanceValue.setText(na); lblMealAllowanceValue.setText(na);
         lblVehicleMaintenanceFeeValue.setText(na); lblResearchDevelopmentExpenseValue.setText(na); lblChildcareAllowanceValue.setText(na);
 
-        // 입력 필드 초기화
         txtContractStartDate.setText(""); txtContractEndDate.setText("");
         txtWorkHoursStart.setText("09:00"); txtWorkHoursEnd.setText("18:00"); txtRestHours.setText("12:00 - 13:00 (1시간)");
         txtOtherTerms.setText(" - 기타 근로조건은 회사 취업규칙 및 관계 법령에 따른다.\n - 본 계약서에 명시되지 아니한 사항은 근로기준법 등 노동관계법령 및 회사의 취업규칙에 따른다.");

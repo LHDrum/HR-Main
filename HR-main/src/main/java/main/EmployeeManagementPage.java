@@ -1,12 +1,28 @@
 package main;
 
+import org.apache.poi.ss.usermodel.BorderStyle;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.DataFormat;
+import org.apache.poi.ss.usermodel.FillPatternType;
+import org.apache.poi.ss.usermodel.HorizontalAlignment;
+import org.apache.poi.ss.usermodel.IndexedColors;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.VerticalAlignment;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+
 import javax.swing.*;
 import javax.swing.border.TitledBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.event.TableModelEvent;
 import javax.swing.filechooser.FileNameExtensionFilter;
-import javax.swing.table.*;
+import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.DefaultTableModel;
+import javax.swing.table.TableColumnModel;
+import javax.swing.table.TableModel;
+import javax.swing.table.TableRowSorter;
 import javax.swing.text.JTextComponent;
 import java.awt.*;
 import java.awt.event.FocusAdapter;
@@ -14,6 +30,8 @@ import java.awt.event.FocusEvent;
 import java.awt.event.KeyEvent;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.text.DecimalFormat;
 import java.text.NumberFormat;
 import java.text.ParseException;
@@ -31,23 +49,11 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
-import org.apache.poi.ss.usermodel.Cell;
-import org.apache.poi.ss.usermodel.CellStyle;
-import org.apache.poi.ss.usermodel.DataFormat;
-import org.apache.poi.ss.usermodel.FillPatternType;
-import org.apache.poi.ss.usermodel.HorizontalAlignment;
-import org.apache.poi.ss.usermodel.IndexedColors;
-import org.apache.poi.ss.usermodel.Row;
-import org.apache.poi.ss.usermodel.Sheet;
-import org.apache.poi.ss.usermodel.VerticalAlignment;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-import org.apache.poi.ss.usermodel.BorderStyle;
-
 
 public class EmployeeManagementPage extends JPanel {
-    private PayrollManager payrollManager;
-    private Runnable returnToSummaryPage;
-    private PayrollApp payrollApp;
+    private final PayrollManager payrollManager;
+    private final Runnable returnToSummaryPage;
+    private final PayrollApp payrollApp;
 
 
     private JComboBox<String> departmentComboBox;
@@ -72,6 +78,7 @@ public class EmployeeManagementPage extends JPanel {
     private Set<Integer> modifiedRowModelIndices;
 
     private final DecimalFormat numberFormatter = new DecimalFormat("#,###");
+    private final DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private boolean isUpdatingFromForm = false;
     private boolean isUpdatingFromTable = false;
     private boolean isProgrammaticChange = false;
@@ -81,12 +88,10 @@ public class EmployeeManagementPage extends JPanel {
     private java.awt.Font enlargedFontBold;
     private java.awt.Font totalsRowFont;
 
-
-    // 급여 계산 시 사용될 상수 정의
-    private static final double HOURS_FOR_BASIC_PAY_CALC = 209.0;
-    private static final double TOTAL_WORK_HOURS_DIVISOR = 224.0;
-    private static final double FIXED_OVERTIME_HOURS_PARAM = 10.0;
-
+    private static final BigDecimal HOURS_FOR_BASIC_PAY_CALC = new BigDecimal("209.0");
+    private static final BigDecimal TOTAL_WORK_HOURS_DIVISOR = new BigDecimal("224.0");
+    private static final BigDecimal FIXED_OVERTIME_HOURS_PARAM = new BigDecimal("10.0");
+    private static final BigDecimal OT_MULTIPLIER = new BigDecimal("1.5");
 
     private static final int COL_NO = 0; private static final int COL_HIRE_DATE = 1; private static final int COL_NAME = 2;
     private static final int COL_DEPARTMENT = 3; private static final int COL_RESIDENT_REG_NO = 4; private static final int COL_PHONE = 5;
@@ -95,13 +100,11 @@ public class EmployeeManagementPage extends JPanel {
     private static final int COL_OTHER_ALLOWANCE = 12; private static final int COL_MEAL_ALLOWANCE = 13; private static final int COL_VEHICLE_FEE = 14;
     private static final int COL_RESEARCH_EXPENSE = 15; private static final int COL_CHILDCARE_ALLOWANCE = 16; private static final int COL_TOTAL_MONTHLY_PAY = 17;
 
-    // 합계 행에 포함될 컬럼 인덱스들
     private final int[] sumColumnIndices = {
             COL_ANNUAL_SALARY, COL_MONTHLY_BASIC, COL_FIXED_OVERTIME, COL_ADDITIONAL_OVERTIME,
             COL_BONUS, COL_OTHER_ALLOWANCE, COL_MEAL_ALLOWANCE, COL_VEHICLE_FEE,
             COL_RESEARCH_EXPENSE, COL_CHILDCARE_ALLOWANCE, COL_TOTAL_MONTHLY_PAY
     };
-
 
     private int scale(int value) {
         return (int) (value * FONT_SCALE_FACTOR);
@@ -116,26 +119,31 @@ public class EmployeeManagementPage extends JPanel {
         float newBaseSize = baseFont.getSize() * FONT_SCALE_FACTOR;
         enlargedFont = baseFont.deriveFont(newBaseSize);
         enlargedFontBold = baseFont.deriveFont(Font.BOLD, newBaseSize);
-        totalsRowFont = enlargedFontBold; // 합계 행 폰트
+        totalsRowFont = enlargedFontBold;
 
         this.displayedEmployeesInTableOrder = new ArrayList<>();
         this.modifiedRowModelIndices = new HashSet<>();
         setLayout(new BorderLayout(scale(10), scale(10)));
         initComponents();
-        loadEmployeeTable(""); // 내부에서 addOrUpdateTotalsRow() 호출
+        loadEmployeeTable("");
         addFormListeners();
         addTableListeners();
     }
 
-    private String formatNumber(long number) { return numberFormatter.format(number); }
-    private String formatNumber(double number) { return numberFormatter.format(Math.round(number)); }
-    private long parseFormattedNumber(String formattedNumber) throws NumberFormatException {
-        if (formattedNumber == null || formattedNumber.trim().isEmpty() || formattedNumber.equals("-") || formattedNumber.equals("오류")) return 0;
+    private String formatNumber(BigDecimal number) {
+        if (number == null) return "0";
+        return numberFormatter.format(number);
+    }
+
+    private BigDecimal parseFormattedNumber(String formattedNumber) throws NumberFormatException {
+        if (formattedNumber == null || formattedNumber.trim().isEmpty() || formattedNumber.equals("-") || formattedNumber.equals("오류")) {
+            return BigDecimal.ZERO;
+        }
         try {
-            return numberFormatter.parse(formattedNumber.trim()).longValue();
+            return new BigDecimal(numberFormatter.parse(formattedNumber.trim()).toString());
         } catch (ParseException e) {
             try {
-                return Long.parseLong(formattedNumber.trim().replace(",", ""));
+                return new BigDecimal(formattedNumber.trim().replace(",", ""));
             } catch (NumberFormatException nfe) {
                 System.err.println("Error parsing number: " + formattedNumber + " - " + nfe.getMessage());
                 throw nfe;
@@ -157,7 +165,11 @@ public class EmployeeManagementPage extends JPanel {
         }
         if (digits.length() >= 7) {
             String monthPart = digits.substring(4, Math.min(6, digits.length()));
-            formattedText = digits.substring(0, 4) + "-" + monthPart + "-" + digits.substring(4 + monthPart.length());
+            if(digits.length() > 4 + monthPart.length()) {
+                formattedText = digits.substring(0, 4) + "-" + monthPart + "-" + digits.substring(4 + monthPart.length());
+            } else {
+                formattedText = digits.substring(0, 4) + "-" + monthPart;
+            }
         }
 
         if (formattedText.length() > 10) {
@@ -325,18 +337,18 @@ public class EmployeeManagementPage extends JPanel {
         try {
             String text = field.getText().replace(",", "");
             if (!text.isEmpty()) {
-                long value = Long.parseLong(text);
+                BigDecimal value = new BigDecimal(text);
                 isProgrammaticChange = true;
                 field.setText(formatNumber(value));
                 isProgrammaticChange = false;
             } else {
                 isProgrammaticChange = true;
-                field.setText(formatNumber(0));
+                field.setText(formatNumber(BigDecimal.ZERO));
                 isProgrammaticChange = false;
             }
         } catch (NumberFormatException ex) {
             isProgrammaticChange = true;
-            field.setText(formatNumber(0));
+            field.setText(formatNumber(BigDecimal.ZERO));
             isProgrammaticChange = false;
         }
     }
@@ -635,11 +647,10 @@ public class EmployeeManagementPage extends JPanel {
         bottomButtonPanel.add(backButton);
         add(bottomButtonPanel, BorderLayout.SOUTH);
 
-
         String[] tableColumnNames = { "No.", "입사일", "이름", "부서", "주민번호", "전화번호", "주소", "연봉", "기본급", "고정연장수당", "추가 연장 수당", "상여금", "기타수당", "식대", "차량유지비", "연구개발비", "육아수당", "총 월 급여" };
         tableModel = new DefaultTableModel(tableColumnNames, 0) {
             @Override public boolean isCellEditable(int row, int column) {
-                if (getRowCount() > 0 && getValueAt(row, COL_NO) != null && getValueAt(row, COL_NO).equals("합계")) {
+                if (getRowCount() > 0 && getValueAt(row, COL_NO) != null && getValueAt(row, COL_NO).toString().equals("합계")) {
                     return false;
                 }
                 switch (column) {
@@ -679,8 +690,7 @@ public class EmployeeManagementPage extends JPanel {
 
         employeeTable.setFont(enlargedFont);
         employeeTable.getTableHeader().setFont(enlargedFontBold);
-        employeeTable.setDefaultRenderer(Object.class, new TotalsAwareNumberRenderer(enlargedFont, totalsRowFont));
-
+        employeeTable.setDefaultRenderer(Object.class, new TotalsAwareNumberRenderer(enlargedFont, totalsRowFont, sumColumnIndices));
 
         FontMetrics fm = employeeTable.getFontMetrics(enlargedFont);
         int fontHeight = fm.getHeight();
@@ -692,7 +702,8 @@ public class EmployeeManagementPage extends JPanel {
         employeeTable.setIntercellSpacing(new Dimension(1,1));
 
         employeeTable.setFillsViewportHeight(true);
-        sorter = new TableRowSorter<>(tableModel); employeeTable.setRowSorter(sorter);
+        sorter = new TableRowSorter<>(tableModel);
+        employeeTable.setRowSorter(sorter);
         TableColumnModel tcm = employeeTable.getColumnModel();
 
         tcm.getColumn(COL_NO).setPreferredWidth(scale(40));
@@ -714,1283 +725,446 @@ public class EmployeeManagementPage extends JPanel {
             }
         }
 
-        JScrollPane scrollPane = new JScrollPane(employeeTable); add(scrollPane, BorderLayout.CENTER);
-
-        searchButton.addActionListener(e -> performSearch());
-        addButton.addActionListener(e -> addNewEmployeeFromTableRowOrForm());
-        updateButton.addActionListener(e -> saveModifiedTableRows());
-        deleteButton.addActionListener(e -> deleteEmployee());
-        clearButton.addActionListener(e -> clearFieldsAndSelection());
-        backButton.addActionListener(e -> {
-            if (returnToSummaryPage != null) returnToSummaryPage.run();
-        });
-        addRowButton.addActionListener(e -> addNewEmptyRowToTable());
-        exportTableButton.addActionListener(e -> exportEmployeeTableToExcel());
-        createContractButton.addActionListener(e -> openContractPage());
+        JScrollPane scrollPane = new JScrollPane(employeeTable);
+        add(scrollPane, BorderLayout.CENTER);
     }
 
+    public void loadEmployeeTable(String searchTerm) {
+        isUpdatingFromTable = true;
+        tableModel.setRowCount(0);
+        displayedEmployeesInTableOrder.clear();
+        modifiedRowModelIndices.clear();
 
-    private void performSearch() {
-        String searchQuery = searchField.getText().trim();
-        loadEmployeeTable(searchQuery);
+        List<Employee> employees = payrollManager.getAllEmployees().stream()
+                .filter(e -> searchTerm.isEmpty() || e.getName().contains(searchTerm) || e.getDepartment().contains(searchTerm))
+                .sorted(Comparator.comparing(Employee::getName))
+                .collect(Collectors.toList());
+
+        BigDecimal[] totals = new BigDecimal[tableModel.getColumnCount()];
+        for (int i = 0; i < totals.length; i++) {
+            totals[i] = BigDecimal.ZERO;
+        }
+
+        int rowNum = 1;
+        for (Employee emp : employees) {
+            displayedEmployeesInTableOrder.add(emp);
+            Optional<Payroll> payrollOpt = payrollManager.getContractualPayroll(emp.getId());
+            if (payrollOpt.isPresent()) {
+                Payroll payroll = payrollOpt.get();
+                Object[] rowData = {
+                        rowNum++,
+                        emp.getHireDate() != null ? emp.getHireDate().format(dateFormatter) : "",
+                        emp.getName(),
+                        emp.getDepartment(),
+                        emp.getResidentRegistrationNumber(),
+                        emp.getPhoneNumber(),
+                        emp.getAddress(),
+                        emp.getAnnualSalary(),
+                        payroll.getMonthlyBasicSalary(),
+                        payroll.getFixedOvertimeAllowance(),
+                        payroll.getAdditionalOvertimePremium(),
+                        payroll.getBonus(),
+                        payroll.getOtherAllowance(),
+                        payroll.getMealAllowance(),
+                        payroll.getVehicleMaintenanceFee(),
+                        payroll.getResearchDevelopmentExpense(),
+                        payroll.getChildcareAllowance(),
+                        payroll.getGrossPay()
+                };
+                tableModel.addRow(rowData);
+
+                for(int idx : sumColumnIndices) {
+                    if(rowData[idx] instanceof BigDecimal) {
+                        totals[idx] = totals[idx].add((BigDecimal)rowData[idx]);
+                    }
+                }
+            }
+        }
+
+        Object[] totalsRow = new Object[tableModel.getColumnCount()];
+        totalsRow[COL_NO] = "합계";
+        for(int idx : sumColumnIndices) {
+            totalsRow[idx] = totals[idx];
+        }
+        tableModel.addRow(totalsRow);
+
+        isUpdatingFromTable = false;
+    }
+
+    private void addFormListeners() {
+        DocumentListener recalculateListener = new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) { if(!isProgrammaticChange) recalculateSalaryComponents(); }
+            public void removeUpdate(DocumentEvent e) { if(!isProgrammaticChange) recalculateSalaryComponents(); }
+            public void changedUpdate(DocumentEvent e) { if(!isProgrammaticChange) recalculateSalaryComponents(); }
+        };
+
+        annualSalaryField.getDocument().addDocumentListener(recalculateListener);
+        bonusField.getDocument().addDocumentListener(recalculateListener);
+        otherAllowanceField.getDocument().addDocumentListener(recalculateListener);
+        mealAllowanceField.getDocument().addDocumentListener(recalculateListener);
+        vehicleMaintenanceFeeField.getDocument().addDocumentListener(recalculateListener);
+        researchDevelopmentExpenseField.getDocument().addDocumentListener(recalculateListener);
+        childcareAllowanceField.getDocument().addDocumentListener(recalculateListener);
+
+        FocusAdapter numericFormatter = new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                formatNumericFieldOnFocusLost((JTextField)e.getSource());
+            }
+        };
+
+        annualSalaryField.addFocusListener(numericFormatter);
+        bonusField.addFocusListener(numericFormatter);
+        otherAllowanceField.addFocusListener(numericFormatter);
+        mealAllowanceField.addFocusListener(numericFormatter);
+        vehicleMaintenanceFeeField.addFocusListener(numericFormatter);
+        researchDevelopmentExpenseField.addFocusListener(numericFormatter);
+        childcareAllowanceField.addFocusListener(numericFormatter);
+
+        hireDateField.getDocument().addDocumentListener(new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) { applyDateFormatting(hireDateField); }
+            public void removeUpdate(DocumentEvent e) { /* Do nothing on remove to prevent weird behavior */ }
+            public void changedUpdate(DocumentEvent e) {}
+        });
+        salaryChangeDateField.getDocument().addDocumentListener(new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) { applyDateFormatting(salaryChangeDateField); }
+            public void removeUpdate(DocumentEvent e) { /* Do nothing */ }
+            public void changedUpdate(DocumentEvent e) {}
+        });
+        residentRegNoField.getDocument().addDocumentListener(new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) { applyResidentRegNoFormatting(residentRegNoField); }
+            public void removeUpdate(DocumentEvent e) { /* Do nothing */ }
+            public void changedUpdate(DocumentEvent e) {}
+        });
+        phoneField.getDocument().addDocumentListener(new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) { applyPhoneFormatting(phoneField); }
+            public void removeUpdate(DocumentEvent e) { /* Do nothing */ }
+            public void changedUpdate(DocumentEvent e) {}
+        });
+
+        searchButton.addActionListener(e -> loadEmployeeTable(searchField.getText()));
+        clearButton.addActionListener(e -> clearForm());
+        backButton.addActionListener(e -> returnToSummaryPage.run());
+        addButton.addActionListener(e -> addEmployee());
+        updateButton.addActionListener(e -> updateAllModifiedEmployees());
+        deleteButton.addActionListener(e -> deleteSelectedEmployee());
+        createContractButton.addActionListener(e -> createContract());
+        addRowButton.addActionListener(e -> {
+            tableModel.insertRow(tableModel.getRowCount() - 1, new Object[tableModel.getColumnCount()]);
+        });
     }
 
     private void addTableListeners() {
-        employeeTable.getSelectionModel().addListSelectionListener(event -> {
-            if (!event.getValueIsAdjusting() && !isUpdatingFromForm) {
+        employeeTable.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting() && !isUpdatingFromForm) {
                 int selectedViewRow = employeeTable.getSelectedRow();
-                if (selectedViewRow >= 0) {
+                if (selectedViewRow != -1) {
                     int modelRow = employeeTable.convertRowIndexToModel(selectedViewRow);
-                    if (modelRow < tableModel.getRowCount() &&
-                            tableModel.getValueAt(modelRow, COL_NO) != null &&
-                            !tableModel.getValueAt(modelRow, COL_NO).equals("합계")) {
-                        isUpdatingFromTable = true;
-                        updateFormFieldsFromSelectedTableRow(modelRow);
-                        isUpdatingFromTable = false;
-                    } else if (tableModel.getValueAt(modelRow, COL_NO) != null &&
-                            tableModel.getValueAt(modelRow, COL_NO).equals("합계")) {
-                        // 합계 행 클릭 시 폼 비우기
-                        clearFields();
+                    if(modelRow < displayedEmployeesInTableOrder.size()){
+                        Employee emp = displayedEmployeesInTableOrder.get(modelRow);
+                        Optional<Payroll> payrollOpt = payrollManager.getContractualPayroll(emp.getId());
+                        payrollOpt.ifPresent(p -> {
+                            selectedEmployeeDbId = emp.getId(); // Set the selected ID
+                            populateForm(emp, p);
+                        });
+                    } else {
+                        clearForm();
                     }
                 }
             }
         });
 
         tableModel.addTableModelListener(e -> {
-            if (e.getType() == TableModelEvent.UPDATE && !isUpdatingFromForm && !isProgrammaticChange) {
-                int modelRow = e.getFirstRow();
-                int column = e.getColumn();
-
-                if (column == TableModelEvent.ALL_COLUMNS || modelRow < 0 || modelRow >= tableModel.getRowCount() ||
-                        (tableModel.getValueAt(modelRow, COL_NO) != null && tableModel.getValueAt(modelRow, COL_NO).equals("합계"))) {
-                    return;
-                }
-
-                int selectedViewRow = employeeTable.getSelectedRow();
-                if (selectedViewRow != -1) {
-                    int selectedModelRow = employeeTable.convertRowIndexToModel(selectedViewRow);
-                    if (modelRow == selectedModelRow) {
-                        isUpdatingFromTable = true;
-                        updateFormFieldsFromSelectedTableRow(modelRow);
-                        if (column == COL_ANNUAL_SALARY ||
-                                (column >= COL_BONUS && column <= COL_CHILDCARE_ALLOWANCE)) {
-                            recalculateSalariesForTableRow(modelRow, true);
-                        }
-                        isUpdatingFromTable = false;
-                    } else {
-                        if (column == COL_ANNUAL_SALARY ||
-                                (column >= COL_BONUS && column <= COL_CHILDCARE_ALLOWANCE)) {
-                            recalculateSalariesForTableRow(modelRow, false);
-                        }
-                    }
-                } else {
-                    if (column == COL_ANNUAL_SALARY ||
-                            (column >= COL_BONUS && column <= COL_CHILDCARE_ALLOWANCE)) {
-                        recalculateSalariesForTableRow(modelRow, false);
-                    }
-                }
-                modifiedRowModelIndices.add(modelRow);
-                addOrUpdateTotalsRow();
+            if (e.getType() == TableModelEvent.UPDATE && !isUpdatingFromForm) {
+                modifiedRowModelIndices.add(e.getFirstRow());
+                updateButton.setEnabled(true);
+                updateButton.setText("수정사항 저장(" + modifiedRowModelIndices.size() + ")");
             }
         });
     }
 
-    private void openContractPage() {
-        int selectedViewRow = employeeTable.getSelectedRow();
-        if (selectedViewRow == -1) {
-            JOptionPane.showMessageDialog(this, "근로계약서를 작성할 직원을 테이블에서 선택해주세요.", "알림", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-        int modelRow = employeeTable.convertRowIndexToModel(selectedViewRow);
-
-        if (tableModel.getValueAt(modelRow, COL_NO).equals("합계")){
-            JOptionPane.showMessageDialog(this, "합계 행에 대해서는 근로계약서를 작성할 수 없습니다.", "알림", JOptionPane.INFORMATION_MESSAGE);
-            return;
-        }
-
-
-        if (modelRow < 0 || modelRow >= displayedEmployeesInTableOrder.size()) {
-            Object noValue = tableModel.getValueAt(modelRow, COL_NO);
-            if ("*".equals(noValue != null ? noValue.toString() : "")) {
-                JOptionPane.showMessageDialog(this, "새로 추가 중인 직원입니다. 먼저 '직원 등록' 또는 '수정사항 저장'을 완료해주세요.", "알림", JOptionPane.WARNING_MESSAGE);
-            } else {
-                JOptionPane.showMessageDialog(this, "유효한 직원 데이터가 아닙니다. 목록을 새로고침하거나 직원을 다시 선택해주세요.", "알림", JOptionPane.WARNING_MESSAGE);
-            }
-            return;
-        }
-
-        Employee selectedEmployee = displayedEmployeesInTableOrder.get(modelRow);
-        if (selectedEmployee.getId() <= 0) {
-            JOptionPane.showMessageDialog(this, "아직 DB에 저장되지 않은 직원입니다. 먼저 '직원 등록' 또는 '수정사항 저장'을 완료해주세요.", "알림", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-
-        Optional<Payroll> contractualPayrollOpt = payrollManager.getContractualPayroll(selectedEmployee.getId());
-
-        if (!contractualPayrollOpt.isPresent()) {
-            try {
-                long annualSalary = selectedEmployee.getAnnualSalary();
-                long bonus = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_BONUS).toString());
-                long otherAllowance = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_OTHER_ALLOWANCE).toString());
-                long mealAllowance = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_MEAL_ALLOWANCE).toString());
-                long vehicleFee = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_VEHICLE_FEE).toString());
-                long researchExpense = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_RESEARCH_EXPENSE).toString());
-                long childcareAllowance = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_CHILDCARE_ALLOWANCE).toString());
-
-                CalculatedSalaryItems items = calculateNewContractualSalaryItems(annualSalary, bonus, otherAllowance, mealAllowance, vehicleFee, researchExpense, childcareAllowance);
-                Payroll tempPayroll = new Payroll(selectedEmployee, (int)items.monthlyBasicSalary, (int)bonus, (int)items.fixedOvertimeAllowance, (int)otherAllowance, (int)mealAllowance, (int)vehicleFee, (int)researchExpense, (int)childcareAllowance);
-                if (payrollApp != null) {
-                    payrollApp.showEmploymentContractPage(selectedEmployee, tempPayroll);
-                }
-
-            } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(this, selectedEmployee.getName() + " 님의 계약 급여 정보 구성 중 오류가 발생했습니다.", "오류", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-        } else {
-            if (payrollApp != null) {
-                payrollApp.showEmploymentContractPage(selectedEmployee, contractualPayrollOpt.get());
-            }
-        }
-    }
-
-    private void addFormListeners() {
-        DocumentListener autoFormatAndUpdateListener = new DocumentListener() {
-            private void handleEvent(DocumentEvent e) {
-                if (isProgrammaticChange || isUpdatingFromTable) return;
-
-                Object sourceDocProperty = e.getDocument().getProperty("owner");
-                if (!(sourceDocProperty instanceof JTextField)) return;
-
-                final JTextField ownerField = (JTextField) sourceDocProperty;
-
-                if (ownerField == hireDateField || ownerField == salaryChangeDateField) {
-                    SwingUtilities.invokeLater(() -> applyDateFormatting(ownerField));
-                } else if (ownerField == residentRegNoField) {
-                    SwingUtilities.invokeLater(() -> applyResidentRegNoFormatting(ownerField));
-                } else if (ownerField == phoneField) {
-                    SwingUtilities.invokeLater(() -> applyPhoneFormatting(ownerField));
-                }
-
-                if (ownerField == annualSalaryField || ownerField == bonusField || ownerField == otherAllowanceField ||
-                        ownerField == mealAllowanceField || ownerField == vehicleMaintenanceFeeField ||
-                        ownerField == researchDevelopmentExpenseField || ownerField == childcareAllowanceField) {
-                    SwingUtilities.invokeLater(() -> {
-                        recalculateAndDisplaySalariesFromForm();
-                        updateSelectedTableRowFromForm();
-                    });
-                } else {
-                    SwingUtilities.invokeLater(this::triggerTableUpdateFromForm);
-                }
-            }
-
-            private void triggerTableUpdateFromForm() {
-                updateSelectedTableRowFromForm();
-            }
-
-            public void changedUpdate(DocumentEvent e) { handleEvent(e); }
-            public void removeUpdate(DocumentEvent e) { handleEvent(e); }
-            public void insertUpdate(DocumentEvent e) { handleEvent(e); }
-        };
-
-        hireDateField.getDocument().putProperty("owner", hireDateField);
-        hireDateField.getDocument().addDocumentListener(autoFormatAndUpdateListener);
-        salaryChangeDateField.getDocument().putProperty("owner", salaryChangeDateField);
-        salaryChangeDateField.getDocument().addDocumentListener(autoFormatAndUpdateListener);
-        nameField.getDocument().putProperty("owner", nameField);
-        nameField.getDocument().addDocumentListener(autoFormatAndUpdateListener);
-        residentRegNoField.getDocument().putProperty("owner", residentRegNoField);
-        residentRegNoField.getDocument().addDocumentListener(autoFormatAndUpdateListener);
-        phoneField.getDocument().putProperty("owner", phoneField);
-        phoneField.getDocument().addDocumentListener(autoFormatAndUpdateListener);
-        addressField.getDocument().putProperty("owner", addressField);
-        addressField.getDocument().addDocumentListener(autoFormatAndUpdateListener);
-        workLocationField.getDocument().putProperty("owner", workLocationField);
-        workLocationField.getDocument().addDocumentListener(autoFormatAndUpdateListener);
-        siteLocationField.getDocument().putProperty("owner", siteLocationField);
-        siteLocationField.getDocument().addDocumentListener(autoFormatAndUpdateListener);
-
-        annualSalaryField.getDocument().putProperty("owner", annualSalaryField);
-        annualSalaryField.getDocument().addDocumentListener(autoFormatAndUpdateListener);
-        bonusField.getDocument().putProperty("owner", bonusField);
-        bonusField.getDocument().addDocumentListener(autoFormatAndUpdateListener);
-        otherAllowanceField.getDocument().putProperty("owner", otherAllowanceField);
-        otherAllowanceField.getDocument().addDocumentListener(autoFormatAndUpdateListener);
-        mealAllowanceField.getDocument().putProperty("owner", mealAllowanceField);
-        mealAllowanceField.getDocument().addDocumentListener(autoFormatAndUpdateListener);
-        vehicleMaintenanceFeeField.getDocument().putProperty("owner", vehicleMaintenanceFeeField);
-        vehicleMaintenanceFeeField.getDocument().addDocumentListener(autoFormatAndUpdateListener);
-        researchDevelopmentExpenseField.getDocument().putProperty("owner", researchDevelopmentExpenseField);
-        researchDevelopmentExpenseField.getDocument().addDocumentListener(autoFormatAndUpdateListener);
-        childcareAllowanceField.getDocument().putProperty("owner", childcareAllowanceField);
-        childcareAllowanceField.getDocument().addDocumentListener(autoFormatAndUpdateListener);
-
-
-        departmentComboBox.addActionListener(e -> {
-            if (!isUpdatingFromTable && !isProgrammaticChange) {
-                updateSelectedTableRowFromForm();
-            }
-        });
-
-        FocusAdapter formFocusLostAdapter = new FocusAdapter() {
-            @Override
-            public void focusLost(FocusEvent e) {
-                if (isProgrammaticChange || isUpdatingFromTable) return;
-                Object sourceComponent = e.getSource();
-                if (!(sourceComponent instanceof JTextField)) return;
-
-                final JTextField sourceField = (JTextField) sourceComponent;
-
-                if (sourceField == hireDateField || sourceField == salaryChangeDateField) {
-                    applyDateFormatting(sourceField);
-                } else if (sourceField == residentRegNoField) {
-                    applyResidentRegNoFormatting(sourceField);
-                } else if (sourceField == phoneField) {
-                    applyPhoneFormatting(sourceField);
-                } else if (sourceField == annualSalaryField || sourceField == bonusField || sourceField == otherAllowanceField ||
-                        sourceField == mealAllowanceField || sourceField == vehicleMaintenanceFeeField ||
-                        sourceField == researchDevelopmentExpenseField || sourceField == childcareAllowanceField) {
-                    formatNumericFieldOnFocusLost(sourceField);
-
-                }
-                if (! (sourceField == annualSalaryField || sourceField == bonusField || sourceField == otherAllowanceField ||
-                        sourceField == mealAllowanceField || sourceField == vehicleMaintenanceFeeField ||
-                        sourceField == researchDevelopmentExpenseField || sourceField == childcareAllowanceField) ) {
-                    updateSelectedTableRowFromForm();
-                }
-            }
-        };
-
-        hireDateField.addFocusListener(formFocusLostAdapter);
-        salaryChangeDateField.addFocusListener(formFocusLostAdapter);
-        nameField.addFocusListener(formFocusLostAdapter);
-        residentRegNoField.addFocusListener(formFocusLostAdapter);
-        phoneField.addFocusListener(formFocusLostAdapter);
-        addressField.addFocusListener(formFocusLostAdapter);
-        workLocationField.addFocusListener(formFocusLostAdapter);
-        siteLocationField.addFocusListener(formFocusLostAdapter);
-
-        annualSalaryField.addFocusListener(formFocusLostAdapter);
-        bonusField.addFocusListener(formFocusLostAdapter);
-        otherAllowanceField.addFocusListener(formFocusLostAdapter);
-        mealAllowanceField.addFocusListener(formFocusLostAdapter);
-        vehicleMaintenanceFeeField.addFocusListener(formFocusLostAdapter);
-        researchDevelopmentExpenseField.addFocusListener(formFocusLostAdapter);
-        childcareAllowanceField.addFocusListener(formFocusLostAdapter);
-    }
-
-    public void loadEmployeeTable(String searchQuery) {
-        isProgrammaticChange = true;
-        removeTotalsRow();
-        tableModel.setRowCount(0);
-        displayedEmployeesInTableOrder.clear();
-        modifiedRowModelIndices.clear();
-
-        List<Employee> allEmployeesFromDB = payrollManager.getAllEmployees();
-        DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-        allEmployeesFromDB.sort(Comparator.comparing(
-                emp -> {
-                    try {
-                        if (emp.getHireDate() != null && !emp.getHireDate().isEmpty()) {
-                            return LocalDate.parse(emp.getHireDate(), dateFormatter);
-                        }
-                    } catch (DateTimeParseException e) { }
-                    return LocalDate.MAX;
-                },
-                Comparator.nullsLast(Comparator.naturalOrder())
-        ));
-
-
-        List<Employee> filteredEmployees;
-        if (searchQuery != null && !searchQuery.trim().isEmpty()) {
-            String lowerCaseQuery = searchQuery.trim().toLowerCase();
-            filteredEmployees = allEmployeesFromDB.stream()
-                    .filter(emp -> emp.getName().toLowerCase().contains(lowerCaseQuery) ||
-                            (emp.getResidentRegistrationNumber() != null && emp.getResidentRegistrationNumber().contains(lowerCaseQuery)))
-                    .collect(Collectors.toList());
-        } else {
-            filteredEmployees = new ArrayList<>(allEmployeesFromDB);
-        }
-
-        displayedEmployeesInTableOrder.addAll(filteredEmployees);
-        AtomicInteger sequenceNumber = new AtomicInteger(1);
-
-        displayedEmployeesInTableOrder.forEach(emp -> {
-            Optional<Payroll> contractualPayrollOpt = payrollManager.getContractualPayroll(emp.getId());
-            Object[] rowData;
-
-            long annualSalary = emp.getAnnualSalary();
-            long bonus = 0, otherAllowance = 0, mealAllowance = 0, vehicleFee = 0, researchExpense = 0, childcareAllowance = 0;
-            long additionalOTPremium = 0;
-
-            if (contractualPayrollOpt.isPresent()) {
-                Payroll storedPayroll = contractualPayrollOpt.get();
-                bonus = storedPayroll.getBonus();
-                otherAllowance = storedPayroll.getOtherAllowance();
-                mealAllowance = storedPayroll.getMealAllowance();
-                vehicleFee = storedPayroll.getVehicleMaintenanceFee();
-                researchExpense = storedPayroll.getResearchDevelopmentExpense();
-                childcareAllowance = storedPayroll.getChildcareAllowance();
-                additionalOTPremium = storedPayroll.getAdditionalOvertimePremium();
-            } else {
-                Map<String, String> settings = payrollManager.loadSettings();
-                mealAllowance = Long.parseLong(settings.getOrDefault("defaultMealAllowance", "200000"));
-            }
-
-            CalculatedSalaryItems calculatedItems = calculateNewContractualSalaryItems(
-                    annualSalary, bonus, otherAllowance, mealAllowance, vehicleFee, researchExpense, childcareAllowance
-            );
-
-            rowData = new Object[]{
-                    sequenceNumber.getAndIncrement(), emp.getHireDate(), emp.getName(),
-                    emp.getDepartment(), emp.getResidentRegistrationNumber(), emp.getPhoneNumber(),
-                    emp.getAddress(),
-                    formatNumber(annualSalary),
-                    formatNumber(calculatedItems.monthlyBasicSalary),
-                    formatNumber(calculatedItems.fixedOvertimeAllowance),
-                    formatNumber(additionalOTPremium),
-                    formatNumber(bonus),
-                    formatNumber(otherAllowance),
-                    formatNumber(mealAllowance),
-                    formatNumber(vehicleFee),
-                    formatNumber(researchExpense),
-                    formatNumber(childcareAllowance),
-                    formatNumber(calculatedItems.totalMonthlyPay)
-            };
-            tableModel.addRow(rowData);
-        });
-
-        addOrUpdateTotalsRow();
-
-        if (sorter == null && tableModel != null) {
-            sorter = new TableRowSorter<>(tableModel);
-            employeeTable.setRowSorter(sorter);
-        } else if (sorter != null) {
-            sorter.setModel(tableModel);
-        }
-
-
-        isProgrammaticChange = false;
-        if (employeeTable.getRowCount() > 1) {
-            employeeTable.setRowSelectionInterval(0,0);
-        } else if (employeeTable.getRowCount() == 1 && !tableModel.getValueAt(0, COL_NO).equals("합계")) {
-            employeeTable.setRowSelectionInterval(0,0);
-        } else {
-            clearFields();
-        }
-    }
-
-    private void removeTotalsRow() {
-        if (tableModel.getRowCount() > 0) {
-            int lastRowIndex = tableModel.getRowCount() - 1;
-            if (tableModel.getValueAt(lastRowIndex, COL_NO) != null &&
-                    tableModel.getValueAt(lastRowIndex, COL_NO).equals("합계")) {
-                tableModel.removeRow(lastRowIndex);
-            }
-        }
-    }
-
-    private void addOrUpdateTotalsRow() {
-        removeTotalsRow();
-
-        if (tableModel.getRowCount() == 0) return;
-
-        long[] columnTotals = new long[tableModel.getColumnCount()];
-        for (int col : sumColumnIndices) {
-            columnTotals[col] = 0;
-        }
-
-        for (int i = 0; i < tableModel.getRowCount(); i++) {
-            for (int colIndex : sumColumnIndices) {
-                try {
-                    Object value = tableModel.getValueAt(i, colIndex);
-                    if (value != null && !value.toString().isEmpty()) {
-                        columnTotals[colIndex] += parseFormattedNumber(value.toString());
-                    }
-                } catch (NumberFormatException e) {
-                    // Ignore parsing errors for sum
-                }
-            }
-        }
-
-        Object[] totalsRowData = new Object[tableModel.getColumnCount()];
-        totalsRowData[COL_NO] = "합계";
-        for (int i = 1; i < tableModel.getColumnCount(); i++) {
-            boolean summed = false;
-            for (int sumColIdx : sumColumnIndices) {
-                if (i == sumColIdx) {
-                    totalsRowData[i] = formatNumber(columnTotals[i]);
-                    summed = true;
-                    break;
-                }
-            }
-            if (!summed) {
-                totalsRowData[i] = "";
-            }
-        }
-        tableModel.addRow(totalsRowData);
-    }
-
-
-    private void updateFormFieldsFromSelectedTableRow(int modelRow) {
-        if (modelRow < 0 || modelRow >= tableModel.getRowCount() || isUpdatingFromForm ||
-                (tableModel.getValueAt(modelRow, COL_NO) != null && tableModel.getValueAt(modelRow, COL_NO).equals("합계")) ) {
-            return;
-        }
-        isProgrammaticChange = true;
-
-        hireDateField.setText(tableModel.getValueAt(modelRow, COL_HIRE_DATE) != null ? tableModel.getValueAt(modelRow, COL_HIRE_DATE).toString() : "");
-        nameField.setText(tableModel.getValueAt(modelRow, COL_NAME) != null ? tableModel.getValueAt(modelRow, COL_NAME).toString() : "");
-        departmentComboBox.setSelectedItem(tableModel.getValueAt(modelRow, COL_DEPARTMENT) != null ? tableModel.getValueAt(modelRow, COL_DEPARTMENT).toString() : "");
-        residentRegNoField.setText(tableModel.getValueAt(modelRow, COL_RESIDENT_REG_NO) != null ? tableModel.getValueAt(modelRow, COL_RESIDENT_REG_NO).toString() : "");
-        phoneField.setText(tableModel.getValueAt(modelRow, COL_PHONE) != null ? tableModel.getValueAt(modelRow, COL_PHONE).toString() : "");
-        addressField.setText(tableModel.getValueAt(modelRow, COL_ADDRESS) != null ? tableModel.getValueAt(modelRow, COL_ADDRESS).toString() : "");
-
-        if (modelRow < displayedEmployeesInTableOrder.size()) {
-            Employee emp = displayedEmployeesInTableOrder.get(modelRow);
-            workLocationField.setText(emp.getWorkLocation() == null ? "" : emp.getWorkLocation());
-            siteLocationField.setText(emp.getSiteLocation() == null ? "" : emp.getSiteLocation());
-            salaryChangeDateField.setText(emp.getSalaryChangeDate() == null ? "" : emp.getSalaryChangeDate());
-            selectedEmployeeDbId = emp.getId();
-        } else {
-            workLocationField.setText("");
-            siteLocationField.setText("");
-            salaryChangeDateField.setText("");
-            selectedEmployeeDbId = 0;
-        }
-
+    private void recalculateSalaryComponents() {
+        if(isUpdatingFromForm || isProgrammaticChange) return;
 
         try {
-            annualSalaryField.setText(tableModel.getValueAt(modelRow, COL_ANNUAL_SALARY).toString());
-            bonusField.setText(tableModel.getValueAt(modelRow, COL_BONUS).toString());
-            otherAllowanceField.setText(tableModel.getValueAt(modelRow, COL_OTHER_ALLOWANCE).toString());
-            mealAllowanceField.setText(tableModel.getValueAt(modelRow, COL_MEAL_ALLOWANCE).toString());
-            vehicleMaintenanceFeeField.setText(tableModel.getValueAt(modelRow, COL_VEHICLE_FEE).toString());
-            researchDevelopmentExpenseField.setText(tableModel.getValueAt(modelRow, COL_RESEARCH_EXPENSE).toString());
-            childcareAllowanceField.setText(tableModel.getValueAt(modelRow, COL_CHILDCARE_ALLOWANCE).toString());
-        } catch (Exception ex) {
-            System.err.println("테이블 -> 폼 숫자 변환 오류 (수당류): " + ex.getMessage() + " 행: " + modelRow);
-            annualSalaryField.setText(formatNumber(0));
-            bonusField.setText(formatNumber(0));
-            otherAllowanceField.setText(formatNumber(0));
-            mealAllowanceField.setText(formatNumber(0));
-            vehicleMaintenanceFeeField.setText(formatNumber(0));
-            researchDevelopmentExpenseField.setText(formatNumber(0));
-            childcareAllowanceField.setText(formatNumber(0));
-        }
-        recalculateAndDisplaySalariesFromForm();
-        isProgrammaticChange = false;
-    }
+            BigDecimal annualSalary = parseFormattedNumber(annualSalaryField.getText());
+            BigDecimal bonus = parseFormattedNumber(bonusField.getText());
+            BigDecimal otherAllowance = parseFormattedNumber(otherAllowanceField.getText());
+            BigDecimal mealAllowance = parseFormattedNumber(mealAllowanceField.getText());
+            BigDecimal vehicleFee = parseFormattedNumber(vehicleMaintenanceFeeField.getText());
+            BigDecimal researchExpense = parseFormattedNumber(researchDevelopmentExpenseField.getText());
+            BigDecimal childcareAllowance = parseFormattedNumber(childcareAllowanceField.getText());
 
-    private void updateSelectedTableRowFromForm() {
-        if (isUpdatingFromTable || isProgrammaticChange) return;
+            BigDecimal totalAllowances = bonus.add(otherAllowance).add(mealAllowance).add(vehicleFee).add(researchExpense).add(childcareAllowance);
 
-        int selectedViewRow = employeeTable.getSelectedRow();
-        if (selectedViewRow == -1) return;
-        int modelRow = employeeTable.convertRowIndexToModel(selectedViewRow);
+            BigDecimal monthlyGross = annualSalary.divide(new BigDecimal("12"), 0, RoundingMode.HALF_UP);
+            BigDecimal hourlyRate = monthlyGross.divide(TOTAL_WORK_HOURS_DIVISOR, 0, RoundingMode.HALF_UP);
+            BigDecimal fixedOvertime = hourlyRate.multiply(FIXED_OVERTIME_HOURS_PARAM).multiply(OT_MULTIPLIER).setScale(0, RoundingMode.HALF_UP);
+            BigDecimal basicPay = monthlyGross.subtract(fixedOvertime);
 
-        if (modelRow < 0 || modelRow >= tableModel.getRowCount() ||
-                (tableModel.getValueAt(modelRow, COL_NO) != null && tableModel.getValueAt(modelRow, COL_NO).equals("합계")) ){
-            return;
-        }
-
-
-        isUpdatingFromForm = true;
-
-        tableModel.setValueAt(hireDateField.getText(), modelRow, COL_HIRE_DATE);
-        tableModel.setValueAt(nameField.getText(), modelRow, COL_NAME);
-        tableModel.setValueAt(departmentComboBox.getSelectedItem().toString(), modelRow, COL_DEPARTMENT);
-        tableModel.setValueAt(residentRegNoField.getText(), modelRow, COL_RESIDENT_REG_NO);
-        tableModel.setValueAt(phoneField.getText(), modelRow, COL_PHONE);
-        tableModel.setValueAt(addressField.getText(), modelRow, COL_ADDRESS);
-
-        try {
-            tableModel.setValueAt(formatNumber(parseFormattedNumber(annualSalaryField.getText())), modelRow, COL_ANNUAL_SALARY);
-            tableModel.setValueAt(formatNumber(parseFormattedNumber(bonusField.getText())), modelRow, COL_BONUS);
-            tableModel.setValueAt(formatNumber(parseFormattedNumber(otherAllowanceField.getText())), modelRow, COL_OTHER_ALLOWANCE);
-            tableModel.setValueAt(formatNumber(parseFormattedNumber(mealAllowanceField.getText())), modelRow, COL_MEAL_ALLOWANCE);
-            tableModel.setValueAt(formatNumber(parseFormattedNumber(vehicleMaintenanceFeeField.getText())), modelRow, COL_VEHICLE_FEE);
-            tableModel.setValueAt(formatNumber(parseFormattedNumber(researchDevelopmentExpenseField.getText())), modelRow, COL_RESEARCH_EXPENSE);
-            tableModel.setValueAt(formatNumber(parseFormattedNumber(childcareAllowanceField.getText())), modelRow, COL_CHILDCARE_ALLOWANCE);
-
-            recalculateSalariesForTableRow(modelRow, false);
-
-        } catch (NumberFormatException ex) {
-            System.err.println("폼 -> 테이블 숫자 변환 오류: " + ex.getMessage());
-        }
-        modifiedRowModelIndices.add(modelRow);
-        addOrUpdateTotalsRow();
-        isUpdatingFromForm = false;
-    }
-
-
-    private void recalculateAndDisplaySalariesFromForm() {
-        if (isUpdatingFromTable || isProgrammaticChange) return;
-        try {
             isProgrammaticChange = true;
-
-            long annualSalary = parseFormattedNumber(annualSalaryField.getText());
-            long bonus = parseFormattedNumber(bonusField.getText());
-            long other = parseFormattedNumber(otherAllowanceField.getText());
-            long meal = parseFormattedNumber(mealAllowanceField.getText());
-            long vehicle = parseFormattedNumber(vehicleMaintenanceFeeField.getText());
-            long research = parseFormattedNumber(researchDevelopmentExpenseField.getText());
-            long childcare = parseFormattedNumber(childcareAllowanceField.getText());
-
-            CalculatedSalaryItems calculated = calculateNewContractualSalaryItems(
-                    annualSalary, bonus, other, meal, vehicle, research, childcare
-            );
-
-            monthlyBasicSalaryField.setText(formatNumber(calculated.monthlyBasicSalary));
-            fixedOvertimeAllowanceField.setText(formatNumber(calculated.fixedOvertimeAllowance));
-            totalMonthlyPayField.setText(formatNumber(calculated.totalMonthlyPay));
-
-            if (TOTAL_WORK_HOURS_DIVISOR > 0 && calculated.totalMonthlyPay > 0) {
-                hourlyWageField.setText(formatNumber(calculated.totalMonthlyPay / TOTAL_WORK_HOURS_DIVISOR));
-            } else {
-                hourlyWageField.setText(formatNumber(0));
-            }
+            hourlyWageField.setText(formatNumber(hourlyRate));
+            monthlyBasicSalaryField.setText(formatNumber(basicPay));
+            fixedOvertimeAllowanceField.setText(formatNumber(fixedOvertime));
+            totalMonthlyPayField.setText(formatNumber(basicPay.add(fixedOvertime).add(totalAllowances)));
+            isProgrammaticChange = false;
 
         } catch (NumberFormatException ex) {
-            hourlyWageField.setText("계산오류");
-            monthlyBasicSalaryField.setText("계산오류");
-            fixedOvertimeAllowanceField.setText("계산오류");
-            totalMonthlyPayField.setText("계산오류");
-            System.err.println("폼 급여 재계산 중 숫자 형식 오류: " + ex.getMessage());
-        } finally {
+            isProgrammaticChange = true;
+            hourlyWageField.setText("오류");
+            monthlyBasicSalaryField.setText("오류");
+            fixedOvertimeAllowanceField.setText("오류");
+            totalMonthlyPayField.setText("오류");
             isProgrammaticChange = false;
         }
     }
 
-    private void recalculateSalariesForTableRow(int modelRow, boolean updateFormIfSelected) {
-        if (modelRow < 0 || modelRow >= tableModel.getRowCount() || isUpdatingFromForm || isProgrammaticChange ||
-                (tableModel.getValueAt(modelRow, COL_NO) != null && tableModel.getValueAt(modelRow, COL_NO).equals("합계")) ) {
-            return;
-        }
-        isProgrammaticChange = true;
-        try {
-            long annualSalary = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_ANNUAL_SALARY).toString());
-            long bonus = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_BONUS).toString());
-            long other = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_OTHER_ALLOWANCE).toString());
-            long meal = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_MEAL_ALLOWANCE).toString());
-            long vehicle = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_VEHICLE_FEE).toString());
-            long research = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_RESEARCH_EXPENSE).toString());
-            long childcare = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_CHILDCARE_ALLOWANCE).toString());
-
-            CalculatedSalaryItems calculated = calculateNewContractualSalaryItems(
-                    annualSalary, bonus, other, meal, vehicle, research, childcare
-            );
-
-            tableModel.setValueAt(formatNumber(calculated.monthlyBasicSalary), modelRow, COL_MONTHLY_BASIC);
-            tableModel.setValueAt(formatNumber(calculated.fixedOvertimeAllowance), modelRow, COL_FIXED_OVERTIME);
-            tableModel.setValueAt(formatNumber(calculated.totalMonthlyPay), modelRow, COL_TOTAL_MONTHLY_PAY);
-
-            if (updateFormIfSelected) {
-                int selectedViewRow = employeeTable.getSelectedRow();
-                if (selectedViewRow != -1 && employeeTable.convertRowIndexToModel(selectedViewRow) == modelRow) {
-                    isUpdatingFromTable = true;
-                    monthlyBasicSalaryField.setText(formatNumber(calculated.monthlyBasicSalary));
-                    fixedOvertimeAllowanceField.setText(formatNumber(calculated.fixedOvertimeAllowance));
-                    totalMonthlyPayField.setText(formatNumber(calculated.totalMonthlyPay));
-                    if (TOTAL_WORK_HOURS_DIVISOR > 0 && calculated.totalMonthlyPay > 0) {
-                        hourlyWageField.setText(formatNumber(calculated.totalMonthlyPay / TOTAL_WORK_HOURS_DIVISOR));
-                    } else {
-                        hourlyWageField.setText(formatNumber(0));
-                    }
-                    isUpdatingFromTable = false;
-                }
-            }
-
-        } catch (NumberFormatException ex) {
-            System.err.println("테이블 행 급여 재계산 오류 (행 " + modelRow + "): " + ex.getMessage());
-            tableModel.setValueAt("오류", modelRow, COL_MONTHLY_BASIC);
-            tableModel.setValueAt("오류", modelRow, COL_FIXED_OVERTIME);
-            tableModel.setValueAt("오류", modelRow, COL_TOTAL_MONTHLY_PAY);
-        } finally {
-            isProgrammaticChange = false;
-        }
-    }
-
-    private static class CalculatedSalaryItems {
-        long monthlyBasicSalary;
-        long fixedOvertimeAllowance;
-        long totalMonthlyPay;
-
-        CalculatedSalaryItems(long basic, long fixedOT, long total) {
-            this.monthlyBasicSalary = basic;
-            this.fixedOvertimeAllowance = fixedOT;
-            this.totalMonthlyPay = total;
-        }
-    }
-
-    private CalculatedSalaryItems calculateNewContractualSalaryItems(
-            long annualSalary, long bonus, long otherAllowance, long mealAllowance,
-            long vehicleMaintenanceFee, long researchDevelopmentExpense, long childcareAllowance) {
-
-        if (annualSalary <= 0 && (bonus + otherAllowance + mealAllowance + vehicleMaintenanceFee + researchDevelopmentExpense + childcareAllowance <=0 )) {
-            return new CalculatedSalaryItems(0, 0, 0);
-        }
-
-        double totalMonthlyPayFromAnnual = (double) annualSalary / 12.0;
-        double hourlyRate = (TOTAL_WORK_HOURS_DIVISOR > 0) ? (totalMonthlyPayFromAnnual / TOTAL_WORK_HOURS_DIVISOR) : 0;
-
-        double basicPortionFromRate = hourlyRate * HOURS_FOR_BASIC_PAY_CALC;
-
-        long finalMonthlyBasicSalary = Math.round(basicPortionFromRate - mealAllowance - childcareAllowance - vehicleMaintenanceFee - researchDevelopmentExpense);
-        finalMonthlyBasicSalary = Math.max(0, finalMonthlyBasicSalary);
-
-        long finalFixedOvertimeAllowance = Math.round(hourlyRate * (FIXED_OVERTIME_HOURS_PARAM * 1.5));
-        finalFixedOvertimeAllowance = Math.max(0, finalFixedOvertimeAllowance);
-
-        long finalTotalMonthlyPay = finalMonthlyBasicSalary + finalFixedOvertimeAllowance +
-                bonus + otherAllowance + mealAllowance +
-                vehicleMaintenanceFee + researchDevelopmentExpense + childcareAllowance;
-
-        return new CalculatedSalaryItems(finalMonthlyBasicSalary, finalFixedOvertimeAllowance, finalTotalMonthlyPay);
-    }
-
-
-    private void addNewEmptyRowToTable() {
-        isProgrammaticChange = true;
-        removeTotalsRow();
-
-        // --- 설정에서 기본값 로드 ---
-        Map<String, String> settings = payrollManager.loadSettings();
-        long defaultAnnualSalary = 0;
-        long defaultBonus = 0;
-        long defaultOther = 0;
-        long defaultMeal = Long.parseLong(settings.getOrDefault("defaultMealAllowance", "200000"));
-        long defaultVehicle = Long.parseLong(settings.getOrDefault("defaultVehicleFee", "0"));
-        long defaultResearch = Long.parseLong(settings.getOrDefault("defaultRdExpense", "0"));
-        long defaultChildcare = Long.parseLong(settings.getOrDefault("defaultChildcareAllowance", "0"));
-        // --- 설정 로드 끝 ---
-
-        Object[] newRowData = new Object[tableModel.getColumnCount()];
-        newRowData[COL_NO] = "*";
-        newRowData[COL_HIRE_DATE] = DateTimeFormatter.ofPattern("yyyy-MM-dd").format(LocalDate.now());
-
-        CalculatedSalaryItems calculatedDefaults = calculateNewContractualSalaryItems(
-                defaultAnnualSalary, defaultBonus, defaultOther, defaultMeal, defaultVehicle, defaultResearch, defaultChildcare
-        );
-
-        newRowData[COL_ANNUAL_SALARY] = formatNumber(defaultAnnualSalary);
-        newRowData[COL_MONTHLY_BASIC] = formatNumber(calculatedDefaults.monthlyBasicSalary);
-        newRowData[COL_FIXED_OVERTIME] = formatNumber(calculatedDefaults.fixedOvertimeAllowance);
-        newRowData[COL_ADDITIONAL_OVERTIME] = formatNumber(0);
-        newRowData[COL_BONUS] = formatNumber(defaultBonus);
-        newRowData[COL_OTHER_ALLOWANCE] = formatNumber(defaultOther);
-        newRowData[COL_MEAL_ALLOWANCE] = formatNumber(defaultMeal);
-        newRowData[COL_VEHICLE_FEE] = formatNumber(defaultVehicle);
-        newRowData[COL_RESEARCH_EXPENSE] = formatNumber(defaultResearch);
-        newRowData[COL_CHILDCARE_ALLOWANCE] = formatNumber(defaultChildcare);
-        newRowData[COL_TOTAL_MONTHLY_PAY] = formatNumber(calculatedDefaults.totalMonthlyPay);
-
-        newRowData[COL_NAME] = ""; newRowData[COL_DEPARTMENT] = ""; newRowData[COL_RESIDENT_REG_NO] = "";
-        newRowData[COL_PHONE] = ""; newRowData[COL_ADDRESS] = "";
-
-        tableModel.addRow(newRowData);
-        addOrUpdateTotalsRow();
-
-        int newRowViewIndex = employeeTable.convertRowIndexToView(tableModel.getRowCount() - 2);
-        if (newRowViewIndex != -1) {
-            employeeTable.setRowSelectionInterval(newRowViewIndex, newRowViewIndex);
-            employeeTable.scrollRectToVisible(employeeTable.getCellRect(newRowViewIndex, 0, true));
-        }
-        isProgrammaticChange = false;
-
-        updateFormFieldsFromSelectedTableRow(tableModel.getRowCount() - 2);
-    }
-
-    private void saveModifiedTableRows() {
-        if (modifiedRowModelIndices.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "테이블에서 수정된 내용이 없습니다.", "알림", JOptionPane.INFORMATION_MESSAGE);
-            return;
-        }
-        int successCount = 0;
-        int failCount = 0;
-        Set<Integer> indicesToProcess = new HashSet<>(modifiedRowModelIndices);
-
-        for (int modelRow : indicesToProcess) {
-            if (modelRow >= displayedEmployeesInTableOrder.size() ||
-                    displayedEmployeesInTableOrder.get(modelRow).getId() <=0 ||
-                    (tableModel.getValueAt(modelRow, COL_NO) != null && tableModel.getValueAt(modelRow, COL_NO).equals("합계")) ||
-                    (tableModel.getValueAt(modelRow, COL_NO) != null && tableModel.getValueAt(modelRow, COL_NO).equals("*")) ) {
-                continue;
-            }
-
-            Employee originalEmployee = displayedEmployeesInTableOrder.get(modelRow);
-            int employeeDbId = originalEmployee.getId();
-
-            try {
-                String name = tableModel.getValueAt(modelRow, COL_NAME).toString();
-                String department = tableModel.getValueAt(modelRow, COL_DEPARTMENT).toString();
-                String phone = tableModel.getValueAt(modelRow, COL_PHONE).toString();
-                String address = tableModel.getValueAt(modelRow, COL_ADDRESS).toString();
-                long annualSalary = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_ANNUAL_SALARY).toString());
-                String hireDate = tableModel.getValueAt(modelRow, COL_HIRE_DATE).toString();
-                String residentRegNo = tableModel.getValueAt(modelRow, COL_RESIDENT_REG_NO).toString();
-
-                String salaryChangeDateStr = originalEmployee.getSalaryChangeDate();
-                String workLocation = originalEmployee.getWorkLocation();
-                String siteLocation = originalEmployee.getSiteLocation();
-
-                int selectedViewRow = employeeTable.getSelectedRow();
-                if(selectedViewRow != -1 && employeeTable.convertRowIndexToModel(selectedViewRow) == modelRow) {
-                    salaryChangeDateStr = salaryChangeDateField.getText();
-                    workLocation = workLocationField.getText();
-                    siteLocation = siteLocationField.getText();
-                }
-
-                if (name.isEmpty() || department.isEmpty() || residentRegNo.isEmpty()) {
-                    failCount++; JOptionPane.showMessageDialog(this, (modelRow + 1) + "번째 행: 이름, 부서, 주민번호는 필수입니다.", "입력 오류", JOptionPane.ERROR_MESSAGE); continue;
-                }
-                if (!residentRegNo.matches("\\d{6}-\\d{7}")) {
-                    failCount++; JOptionPane.showMessageDialog(this, (modelRow + 1) + "번째 행: 주민등록번호 형식이 올바르지 않습니다.", "입력 오류", JOptionPane.ERROR_MESSAGE); continue;
-                }
-                if (!isValidDateFormat(hireDate)) {
-                    failCount++; JOptionPane.showMessageDialog(this, (modelRow+1) + "번째 행: 입사일 형식이 올바르지 않습니다 (YYYY-MM-DD).", "입력 오류", JOptionPane.ERROR_MESSAGE); continue;
-                }
-                if (salaryChangeDateStr != null && !salaryChangeDateStr.trim().isEmpty() && !isValidDateFormat(salaryChangeDateStr)) {
-                    failCount++; JOptionPane.showMessageDialog(this, (modelRow+1) + "번째 행: 급여변동일 형식이 올바르지 않습니다 (YYYY-MM-DD).", "입력 오류", JOptionPane.ERROR_MESSAGE); continue;
-                }
-
-                Optional<Employee> existingEmpByRRN = payrollManager.getEmployeeByResidentRegNo(residentRegNo);
-                if (existingEmpByRRN.isPresent() && existingEmpByRRN.get().getId() != employeeDbId) {
-                    failCount++; JOptionPane.showMessageDialog(this, (modelRow + 1) + "번째 행: 해당 주민등록번호는 이미 다른 직원에게 사용 중입니다.", "입력 오류", JOptionPane.ERROR_MESSAGE); continue;
-                }
-
-                long bonus = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_BONUS).toString());
-                long otherAllowance = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_OTHER_ALLOWANCE).toString());
-                long mealAllowance = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_MEAL_ALLOWANCE).toString());
-                long vehicleFee = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_VEHICLE_FEE).toString());
-                long researchExpense = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_RESEARCH_EXPENSE).toString());
-                long childcareAllowance = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_CHILDCARE_ALLOWANCE).toString());
-
-                CalculatedSalaryItems calculatedPayrollItems = calculateNewContractualSalaryItems(
-                        annualSalary, bonus, otherAllowance, mealAllowance, vehicleFee, researchExpense, childcareAllowance
-                );
-
-                Employee employeeToUpdate = new Employee(employeeDbId, name, residentRegNo, phone, (int)annualSalary, address, hireDate, salaryChangeDateStr == null || salaryChangeDateStr.trim().isEmpty() ? null : salaryChangeDateStr, department, workLocation, siteLocation);
-
-                boolean empSuccess = payrollManager.updateEmployeeDetails(employeeToUpdate);
-                boolean payrollSuccess = payrollManager.updatePayroll(
-                        employeeToUpdate,
-                        (int)calculatedPayrollItems.monthlyBasicSalary,
-                        (int)bonus,
-                        (int)calculatedPayrollItems.fixedOvertimeAllowance,
-                        (int)otherAllowance,
-                        (int)mealAllowance,
-                        (int)vehicleFee,
-                        (int)researchExpense,
-                        (int)childcareAllowance
-                );
-
-                if (empSuccess || payrollSuccess) { successCount++;
-                } else { failCount++; }
-            } catch (Exception ex) {
-                failCount++; JOptionPane.showMessageDialog(this, (modelRow + 1) + "번째 행 수정 중 오류: " + ex.getMessage(), "오류", JOptionPane.ERROR_MESSAGE); ex.printStackTrace();
-            }
-        }
-
-        String message = "";
-        if (successCount > 0) message += successCount + "명의 직원 정보가 성공적으로 수정되었습니다.";
-        if (failCount > 0) message += (message.isEmpty() ? "" : "\n") + failCount + "건의 수정에 실패했습니다.";
-        if (message.isEmpty()) message = "수정할 기존 직원이 없거나, 새 행은 '직원 등록'으로 처리됩니다.";
-
-        JOptionPane.showMessageDialog(this, message, "수정 결과", JOptionPane.INFORMATION_MESSAGE);
-        modifiedRowModelIndices.clear();
-        loadEmployeeTable(searchField.getText().trim());
-    }
-
-
-    private void addNewEmployeeFromTableRowOrForm() {
-        int processedCount = 0;
-        int successCount = 0;
-        int failCount = 0;
-        List<Integer> rowsToRemoveAfterProcessing = new ArrayList<>();
-
-        for (int modelRow = 0; modelRow < tableModel.getRowCount(); modelRow++) {
-            if (tableModel.getValueAt(modelRow, COL_NO) != null &&
-                    "*".equals(tableModel.getValueAt(modelRow, COL_NO).toString())) {
-
-                processedCount++;
-                try {
-                    String name = tableModel.getValueAt(modelRow, COL_NAME) != null ? tableModel.getValueAt(modelRow, COL_NAME).toString() : "";
-                    String department = tableModel.getValueAt(modelRow, COL_DEPARTMENT) != null ? tableModel.getValueAt(modelRow, COL_DEPARTMENT).toString() : "";
-                    String resNo = tableModel.getValueAt(modelRow, COL_RESIDENT_REG_NO) != null ? tableModel.getValueAt(modelRow, COL_RESIDENT_REG_NO).toString() : "";
-                    String phone = tableModel.getValueAt(modelRow, COL_PHONE) != null ? tableModel.getValueAt(modelRow, COL_PHONE).toString() : "";
-                    String address = tableModel.getValueAt(modelRow, COL_ADDRESS) != null ? tableModel.getValueAt(modelRow, COL_ADDRESS).toString() : "";
-                    String hireDate = tableModel.getValueAt(modelRow, COL_HIRE_DATE) != null ? tableModel.getValueAt(modelRow, COL_HIRE_DATE).toString() : "";
-
-                    String salaryChangeDateStr = salaryChangeDateField.getText();
-                    String workLocation = workLocationField.getText();
-                    String siteLocation = siteLocationField.getText();
-
-                    long annualSalary = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_ANNUAL_SALARY).toString());
-                    long bonus = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_BONUS).toString());
-                    long other = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_OTHER_ALLOWANCE).toString());
-                    long meal = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_MEAL_ALLOWANCE).toString());
-                    long vehicle = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_VEHICLE_FEE).toString());
-                    long research = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_RESEARCH_EXPENSE).toString());
-                    long childcare = parseFormattedNumber(tableModel.getValueAt(modelRow, COL_CHILDCARE_ALLOWANCE).toString());
-
-                    if (name.isEmpty() || department == null || department.isEmpty() || resNo.isEmpty() || annualSalary <= 0 || hireDate.isEmpty()) {
-                        JOptionPane.showMessageDialog(this, "행 " + (modelRow + 1) + ": 이름, 부서, 주민번호, 입사일, 연봉(0 초과)은 필수입니다.", "입력 오류", JOptionPane.ERROR_MESSAGE);
-                        failCount++; continue;
-                    }
-                    if (!resNo.matches("\\d{6}-\\d{7}")) {
-                        JOptionPane.showMessageDialog(this, "행 " + (modelRow + 1) + ": 주민등록번호 형식이 올바르지 않습니다 (xxxxxx-xxxxxxx).");
-                        failCount++; continue;
-                    }
-                    if (payrollManager.getEmployeeByResidentRegNo(resNo).isPresent()) {
-                        JOptionPane.showMessageDialog(this, "행 " + (modelRow + 1) + ": 이미 등록된 주민등록번호입니다.");
-                        failCount++; continue;
-                    }
-                    if (!isValidDateFormat(hireDate)) {
-                        JOptionPane.showMessageDialog(this, "행 " + (modelRow + 1) + ": 입사일 형식이 올바르지 않습니다 (YYYY-MM-DD).");
-                        failCount++; continue;
-                    }
-                    if (salaryChangeDateStr != null && !salaryChangeDateStr.trim().isEmpty() && !isValidDateFormat(salaryChangeDateStr)) {
-                        JOptionPane.showMessageDialog(this, "행 " + (modelRow + 1) + ": 급여변동일 형식이 올바르지 않습니다 (YYYY-MM-DD).");
-                        failCount++; continue;
-                    }
-
-
-                    CalculatedSalaryItems calculatedPayrollItems = calculateNewContractualSalaryItems(
-                            annualSalary, bonus, other, meal, vehicle, research, childcare
-                    );
-                    Employee newEmp = new Employee(name, resNo, phone, (int)annualSalary, address, hireDate, salaryChangeDateStr == null || salaryChangeDateStr.trim().isEmpty() ? null : salaryChangeDateStr, department, workLocation, siteLocation);
-
-                    if (payrollManager.addEmployee(newEmp)) {
-                        Optional<Employee> addedEmpOpt = payrollManager.getEmployeeByResidentRegNo(resNo);
-                        if (addedEmpOpt.isPresent()) {
-                            newEmp.setId(addedEmpOpt.get().getId());
-                            payrollManager.updatePayroll(newEmp,
-                                    (int)calculatedPayrollItems.monthlyBasicSalary, (int)bonus,
-                                    (int)calculatedPayrollItems.fixedOvertimeAllowance, (int)other, (int)meal,
-                                    (int)vehicle, (int)research, (int)childcare);
-                            successCount++;
-                            rowsToRemoveAfterProcessing.add(modelRow);
-                        } else {
-                            failCount++; payrollManager.deleteEmployeeById(newEmp.getId());
-                        }
-                    } else {
-                        failCount++;
-                    }
-                } catch (Exception ex) {
-                    failCount++;
-                    JOptionPane.showMessageDialog(this, "행 " + (modelRow + 1) + " 처리 중 오류: " + ex.getMessage(), "오류", JOptionPane.ERROR_MESSAGE);
-                    ex.printStackTrace();
-                }
-            }
-        }
-
-        if (processedCount == 0 && (selectedEmployeeDbId <= 0 && !nameField.getText().trim().isEmpty())) {
-            try {
-                String name = nameField.getText();
-                String department = (String) departmentComboBox.getSelectedItem();
-                String resNo = residentRegNoField.getText();
-                String phone = phoneField.getText();
-                String address = addressField.getText();
-                String hireDate = hireDateField.getText();
-                String salaryChangeDateStr = salaryChangeDateField.getText();
-                String workLocation = workLocationField.getText();
-                String siteLocation = siteLocationField.getText();
-
-                long annualSalary = parseFormattedNumber(annualSalaryField.getText());
-                long bonus = parseFormattedNumber(bonusField.getText());
-                long other = parseFormattedNumber(otherAllowanceField.getText());
-                long meal = parseFormattedNumber(mealAllowanceField.getText());
-                long vehicle = parseFormattedNumber(vehicleMaintenanceFeeField.getText());
-                long research = parseFormattedNumber(researchDevelopmentExpenseField.getText());
-                long childcare = parseFormattedNumber(childcareAllowanceField.getText());
-
-                if (name.isEmpty() || department == null || department.isEmpty() || resNo.isEmpty() || annualSalary <= 0 || hireDate.isEmpty()) {
-                    JOptionPane.showMessageDialog(this, "폼 입력: 이름, 부서, 주민번호, 입사일, 연봉(0 초과)은 필수입니다.", "입력 오류", JOptionPane.ERROR_MESSAGE);
-                } else if (!resNo.matches("\\d{6}-\\d{7}")) {
-                    JOptionPane.showMessageDialog(this, "폼 입력: 주민등록번호 형식이 올바르지 않습니다.");
-                } else if (payrollManager.getEmployeeByResidentRegNo(resNo).isPresent()) {
-                    JOptionPane.showMessageDialog(this, "폼 입력: 이미 등록된 주민등록번호입니다.");
-                } else if (!isValidDateFormat(hireDate)) {
-                    JOptionPane.showMessageDialog(this, "폼 입력: 입사일 형식이 올바르지 않습니다 (YYYY-MM-DD).");
-                } else if (salaryChangeDateStr != null && !salaryChangeDateStr.trim().isEmpty() && !isValidDateFormat(salaryChangeDateStr)) {
-                    JOptionPane.showMessageDialog(this, "폼 입력: 급여변동일 형식이 올바르지 않습니다 (YYYY-MM-DD).");
-                } else {
-                    CalculatedSalaryItems calculatedPayrollItems = calculateNewContractualSalaryItems(
-                            annualSalary, bonus, other, meal, vehicle, research, childcare);
-                    Employee newEmp = new Employee(name, resNo, phone, (int)annualSalary, address, hireDate, salaryChangeDateStr == null || salaryChangeDateStr.trim().isEmpty() ? null : salaryChangeDateStr, department, workLocation, siteLocation);
-
-                    if (payrollManager.addEmployee(newEmp)) {
-                        Optional<Employee> addedEmpOpt = payrollManager.getEmployeeByResidentRegNo(resNo);
-                        if (addedEmpOpt.isPresent()) {
-                            newEmp.setId(addedEmpOpt.get().getId());
-                            payrollManager.updatePayroll(newEmp,
-                                    (int)calculatedPayrollItems.monthlyBasicSalary, (int)bonus,
-                                    (int)calculatedPayrollItems.fixedOvertimeAllowance, (int)other, (int)meal,
-                                    (int)vehicle, (int)research, (int)childcare);
-                            successCount++;
-                        } else {
-                            failCount++; payrollManager.deleteEmployeeById(newEmp.getId());
-                        }
-                    } else {
-                        failCount++;
-                    }
-                }
-            } catch (Exception ex) {
-                failCount++;
-                JOptionPane.showMessageDialog(this, "폼 데이터 처리 중 오류: " + ex.getMessage(), "오류", JOptionPane.ERROR_MESSAGE);
-                ex.printStackTrace();
-            }
-        }
-
-
-        String message = "";
-        if (successCount > 0) message += successCount + "명의 신규 직원이 등록되었습니다.";
-        if (failCount > 0) message += (message.isEmpty() ? "" : "\n") + failCount + "건의 등록에 실패했습니다.";
-        if (successCount == 0 && failCount == 0 && processedCount == 0 && (selectedEmployeeDbId > 0 || nameField.getText().trim().isEmpty() )) {
-            message = "등록할 신규 직원 정보가 없습니다. 테이블에 새 행을 추가하고 내용을 입력하거나, 폼에서 새 직원 정보를 입력해주세요.";
-        }
-
-
-        if (!message.isEmpty()) {
-            JOptionPane.showMessageDialog(this, message, "일괄 등록 결과", JOptionPane.INFORMATION_MESSAGE);
-        }
-
-        loadEmployeeTable(searchField.getText().trim());
-        clearFieldsAndSelection();
-    }
-
-
-    private void deleteEmployee() {
-        int currentIdToDelete = selectedEmployeeDbId;
-        int selectedViewRow = employeeTable.getSelectedRow();
-
-        if (selectedViewRow != -1) {
-            int modelRow = employeeTable.convertRowIndexToModel(selectedViewRow);
-            if (modelRow < tableModel.getRowCount() &&
-                    tableModel.getValueAt(modelRow, COL_NO) != null &&
-                    tableModel.getValueAt(modelRow, COL_NO).equals("합계")) {
-                JOptionPane.showMessageDialog(this, "합계 행은 삭제할 수 없습니다.", "알림", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-
-            if (modelRow < displayedEmployeesInTableOrder.size() &&
-                    displayedEmployeesInTableOrder.get(modelRow) != null &&
-                    displayedEmployeesInTableOrder.get(modelRow).getId() > 0) {
-                currentIdToDelete = displayedEmployeesInTableOrder.get(modelRow).getId();
-            } else if (modelRow < tableModel.getRowCount() &&
-                    tableModel.getValueAt(modelRow, COL_NO) != null &&
-                    "*".equals(tableModel.getValueAt(modelRow, COL_NO).toString())) {
-                isProgrammaticChange = true;
-                tableModel.removeRow(modelRow);
-                addOrUpdateTotalsRow();
-                isProgrammaticChange = false;
-                modifiedRowModelIndices.remove(modelRow);
-                JOptionPane.showMessageDialog(this, "테이블에서 새 입력 행이 삭제되었습니다.");
-                clearFieldsAndSelection();
-                return;
-            }
-        }
-
-        if (currentIdToDelete <= 0 ) {
-            JOptionPane.showMessageDialog(this, "삭제할 직원을 선택해주세요 (DB에 저장된 직원).");
-            return;
-        }
-
-        int confirm = JOptionPane.showConfirmDialog(this, "정말로 이 직원을 삭제하시겠습니까? 관련 급여 데이터도 삭제됩니다.", "직원 삭제 확인", JOptionPane.YES_NO_OPTION);
-        if (confirm == JOptionPane.YES_OPTION) {
-            if (payrollManager.deleteEmployeeById(currentIdToDelete)) {
-                JOptionPane.showMessageDialog(this, "직원이 성공적으로 삭제되었습니다.");
-                loadEmployeeTable("");
-                clearFieldsAndSelection();
-            } else {
-                JOptionPane.showMessageDialog(this, "직원 삭제 실패.");
-            }
-        }
-    }
-
-    private void clearFieldsAndSelection() {
-        clearFields();
-        modifiedRowModelIndices.clear();
-        employeeTable.clearSelection();
-    }
-
-    public void clearFields() {
+    private void clearForm() {
         isProgrammaticChange = true;
         selectedEmployeeDbId = -1;
 
+        // Form panel 1
+        for(Component c : ((Container)nameField.getParent()).getComponents()){
+            if(c instanceof JTextField) ((JTextField) c).setText("");
+        }
         departmentComboBox.setSelectedIndex(0);
-        nameField.setText(""); residentRegNoField.setText(""); phoneField.setText("");
-        addressField.setText(""); hireDateField.setText(""); salaryChangeDateField.setText("");
-        workLocationField.setText(""); siteLocationField.setText("");
 
-        annualSalaryField.setText("");
+        // Form panel 2
+        for(Component c : ((Container)annualSalaryField.getParent()).getComponents()){
+            if(c instanceof JTextField) ((JTextField) c).setText("");
+        }
 
         Map<String, String> settings = payrollManager.loadSettings();
-        long defaultMeal = Long.parseLong(settings.getOrDefault("defaultMealAllowance", "200000"));
-        long defaultChildcare = Long.parseLong(settings.getOrDefault("defaultChildcareAllowance", "0"));
-        long defaultVehicle = Long.parseLong(settings.getOrDefault("defaultVehicleFee", "0"));
-        long defaultResearch = Long.parseLong(settings.getOrDefault("defaultRdExpense", "0"));
+        mealAllowanceField.setText(formatNumber(new BigDecimal(settings.getOrDefault("defaultMealAllowance", "200000"))));
+        childcareAllowanceField.setText(formatNumber(new BigDecimal(settings.getOrDefault("defaultChildcareAllowance", "0"))));
 
-        bonusField.setText(formatNumber(0));
-        otherAllowanceField.setText(formatNumber(0));
-        mealAllowanceField.setText(formatNumber(defaultMeal));
-        vehicleMaintenanceFeeField.setText(formatNumber(defaultVehicle));
-        researchDevelopmentExpenseField.setText(formatNumber(defaultResearch));
-        childcareAllowanceField.setText(formatNumber(defaultChildcare));
-
-        CalculatedSalaryItems clearedCalc = calculateNewContractualSalaryItems(0, 0, 0, defaultMeal, defaultVehicle, defaultResearch, defaultChildcare);
-        monthlyBasicSalaryField.setText(formatNumber(clearedCalc.monthlyBasicSalary));
-        fixedOvertimeAllowanceField.setText(formatNumber(clearedCalc.fixedOvertimeAllowance));
-        totalMonthlyPayField.setText(formatNumber(clearedCalc.totalMonthlyPay));
-        if (TOTAL_WORK_HOURS_DIVISOR > 0 && clearedCalc.totalMonthlyPay > 0) {
-            hourlyWageField.setText(formatNumber(clearedCalc.totalMonthlyPay / TOTAL_WORK_HOURS_DIVISOR));
-        } else {
-            hourlyWageField.setText(formatNumber(0));
-        }
-
-        searchField.setText("");
         isProgrammaticChange = false;
+        recalculateSalaryComponents();
+        employeeTable.clearSelection();
     }
 
-    private boolean isValidDateFormat(String date) {
-        if (date == null || date.trim().isEmpty()) return true;
-        try {
-            LocalDate.parse(date, DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-            return true;
-        } catch (DateTimeParseException e) {
-            return false;
-        }
+    private void populateForm(Employee emp, Payroll payroll) {
+        isUpdatingFromForm = true;
+        isProgrammaticChange = true;
+
+        hireDateField.setText(emp.getHireDate() != null ? emp.getHireDate().format(dateFormatter) : "");
+        salaryChangeDateField.setText(emp.getSalaryChangeDate() != null ? emp.getSalaryChangeDate().format(dateFormatter) : "");
+        departmentComboBox.setSelectedItem(emp.getDepartment() != null ? emp.getDepartment() : "");
+        nameField.setText(emp.getName());
+        residentRegNoField.setText(emp.getResidentRegistrationNumber());
+        phoneField.setText(emp.getPhoneNumber());
+        addressField.setText(emp.getAddress());
+        workLocationField.setText(emp.getWorkLocation());
+        siteLocationField.setText(emp.getSiteLocation());
+
+        annualSalaryField.setText(formatNumber(emp.getAnnualSalary()));
+        monthlyBasicSalaryField.setText(formatNumber(payroll.getMonthlyBasicSalary()));
+        fixedOvertimeAllowanceField.setText(formatNumber(payroll.getFixedOvertimeAllowance()));
+        bonusField.setText(formatNumber(payroll.getBonus()));
+        otherAllowanceField.setText(formatNumber(payroll.getOtherAllowance()));
+        mealAllowanceField.setText(formatNumber(payroll.getMealAllowance()));
+        vehicleMaintenanceFeeField.setText(formatNumber(payroll.getVehicleMaintenanceFee()));
+        researchDevelopmentExpenseField.setText(formatNumber(payroll.getResearchDevelopmentExpense()));
+        childcareAllowanceField.setText(formatNumber(payroll.getChildcareAllowance()));
+
+        BigDecimal monthlyGrossFromAnnual = emp.getAnnualSalary().divide(new BigDecimal("12"), 0, RoundingMode.HALF_UP);
+        BigDecimal hourlyRate = monthlyGrossFromAnnual.divide(TOTAL_WORK_HOURS_DIVISOR, 0, RoundingMode.HALF_UP);
+        hourlyWageField.setText(formatNumber(hourlyRate));
+
+        BigDecimal totalPay = payroll.getMonthlyBasicSalary()
+                .add(payroll.getFixedOvertimeAllowance())
+                .add(payroll.getBonus())
+                .add(payroll.getOtherAllowance())
+                .add(payroll.getMealAllowance())
+                .add(payroll.getVehicleMaintenanceFee())
+                .add(payroll.getResearchDevelopmentExpense())
+                .add(payroll.getChildcareAllowance());
+        totalMonthlyPayField.setText(formatNumber(totalPay));
+
+        isProgrammaticChange = false;
+        isUpdatingFromForm = false;
     }
 
-    private void exportEmployeeTableToExcel() {
-        if (tableModel.getRowCount() == 0 || (tableModel.getRowCount() == 1 && tableModel.getValueAt(0, COL_NO).equals("합계"))) {
-            JOptionPane.showMessageDialog(this, "내보낼 데이터가 없습니다.", "알림", JOptionPane.INFORMATION_MESSAGE);
+    private void addEmployee() {
+        if(nameField.getText().trim().isEmpty() || residentRegNoField.getText().trim().length() != 14 || annualSalaryField.getText().isEmpty()) {
+            JOptionPane.showMessageDialog(this, "이름, 주민번호, 연봉은 필수 입력 항목입니다.", "입력 오류", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
-        JFileChooser fileChooser = new JFileChooser();
-        fileChooser.setDialogTitle("직원 정보 엑셀로 저장");
-        fileChooser.setSelectedFile(new File("직원급여정보목록.xlsx"));
-        fileChooser.setFileFilter(new FileNameExtensionFilter("Excel 통합 문서 (*.xlsx)", "xlsx"));
+        Employee emp = getEmployeeFromForm();
+        Payroll payroll = getPayrollFromForm();
 
-        if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
-            File fileToSave = fileChooser.getSelectedFile();
-            if (!fileToSave.getName().toLowerCase().endsWith(".xlsx")) {
-                fileToSave = new File(fileToSave.getParentFile(), fileToSave.getName() + ".xlsx");
+        if(payrollManager.addEmployee(emp, payroll)) {
+            JOptionPane.showMessageDialog(this, "직원 정보가 성공적으로 등록되었습니다.", "등록 완료", JOptionPane.INFORMATION_MESSAGE);
+            loadEmployeeTable("");
+            clearForm();
+        } else {
+            JOptionPane.showMessageDialog(this, "직원 등록에 실패했습니다. (주민번호 중복 등)", "등록 실패", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void updateAllModifiedEmployees() {
+        if(modifiedRowModelIndices.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "수정된 항목이 없습니다.", "알림", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        int successCount = 0;
+        for(Integer modelRow : modifiedRowModelIndices) {
+            Employee emp = getEmployeeFromTableRow(modelRow);
+            Payroll payroll = getPayrollFromTableRow(modelRow);
+            if(payrollManager.updateEmployee(emp, payroll)) {
+                successCount++;
             }
+        }
 
-            if (fileToSave.exists()) {
-                int response = JOptionPane.showConfirmDialog(this,
-                        "이미 같은 이름의 파일이 존재합니다. 덮어쓰시겠습니까?",
-                        "덮어쓰기 확인",
-                        JOptionPane.YES_NO_OPTION,
-                        JOptionPane.WARNING_MESSAGE);
-                if (response == JOptionPane.NO_OPTION) {
-                    return;
-                }
-            }
+        JOptionPane.showMessageDialog(this, String.format("%d건의 수정사항 중 %d건이 성공적으로 반영되었습니다.", modifiedRowModelIndices.size(), successCount), "수정 완료", JOptionPane.INFORMATION_MESSAGE);
+        modifiedRowModelIndices.clear();
+        updateButton.setText("수정사항 저장");
+        updateButton.setEnabled(false);
+        loadEmployeeTable(searchField.getText());
+    }
 
-            try (XSSFWorkbook workbook = new XSSFWorkbook()) {
-                Sheet sheet = workbook.createSheet("직원목록");
-
-                CellStyle headerStyle = workbook.createCellStyle();
-                org.apache.poi.ss.usermodel.Font poiHeaderFont = workbook.createFont();
-                poiHeaderFont.setBold(true);
-                poiHeaderFont.setFontHeightInPoints((short) 11);
-                headerStyle.setFont(poiHeaderFont);
-                headerStyle.setAlignment(HorizontalAlignment.CENTER);
-                headerStyle.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
-                headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
-                headerStyle.setBorderTop(BorderStyle.THIN);
-                headerStyle.setBorderBottom(BorderStyle.THIN);
-                headerStyle.setBorderLeft(BorderStyle.THIN);
-                headerStyle.setBorderRight(BorderStyle.THIN);
-
-                CellStyle dataStyle = workbook.createCellStyle();
-                dataStyle.setBorderTop(BorderStyle.DOTTED);dataStyle.setBorderBottom(BorderStyle.DOTTED);
-                dataStyle.setBorderLeft(BorderStyle.DOTTED);dataStyle.setBorderRight(BorderStyle.DOTTED);
-                dataStyle.setVerticalAlignment(VerticalAlignment.CENTER);
-
-                CellStyle numberStyle = workbook.createCellStyle();
-                numberStyle.cloneStyleFrom(dataStyle);
-                DataFormat excelFormat = workbook.createDataFormat();
-                numberStyle.setDataFormat(excelFormat.getFormat("#,##0"));
-                numberStyle.setAlignment(HorizontalAlignment.RIGHT);
-
-                CellStyle centerDataStyle = workbook.createCellStyle();
-                centerDataStyle.cloneStyleFrom(dataStyle);
-                centerDataStyle.setAlignment(HorizontalAlignment.CENTER);
-
-                CellStyle totalsLabelStyle = workbook.createCellStyle();
-                totalsLabelStyle.cloneStyleFrom(headerStyle);
-                totalsLabelStyle.setFillForegroundColor(IndexedColors.LIGHT_YELLOW.getIndex());
-                totalsLabelStyle.setAlignment(HorizontalAlignment.CENTER);
-
-                CellStyle totalsNumberStyle = workbook.createCellStyle();
-                totalsNumberStyle.cloneStyleFrom(numberStyle);
-                totalsNumberStyle.setFillForegroundColor(IndexedColors.LIGHT_YELLOW.getIndex());
-                totalsNumberStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
-                org.apache.poi.ss.usermodel.Font poiTotalsNumberFont = workbook.createFont();
-                poiTotalsNumberFont.setBold(true);
-                totalsNumberStyle.setFont(poiTotalsNumberFont);
-
-
-                Row excelHeaderRow = sheet.createRow(0);
-                for (int col = 0; col < tableModel.getColumnCount(); col++) {
-                    Cell cell = excelHeaderRow.createCell(col);
-                    cell.setCellValue(tableModel.getColumnName(col));
-                    cell.setCellStyle(headerStyle);
-                }
-
-                int excelRowIdx = 0;
-                for (int row = 0; row < tableModel.getRowCount(); row++) {
-                    boolean isTotalsRow = tableModel.getValueAt(row, COL_NO) != null && tableModel.getValueAt(row, COL_NO).equals("합계");
-
-                    Row dataRow = sheet.createRow(excelRowIdx + 1);
-                    for (int col = 0; col < tableModel.getColumnCount(); col++) {
-                        Object cellValue = tableModel.getValueAt(row, col);
-                        Cell cell = dataRow.createCell(col);
-
-                        if (isTotalsRow) {
-                            if (col == COL_NO) {
-                                cell.setCellValue(cellValue.toString());
-                                cell.setCellStyle(totalsLabelStyle);
-                            } else {
-                                boolean isSumCol = false;
-                                for(int sumIdx : sumColumnIndices){
-                                    if(col == sumIdx){
-                                        isSumCol = true;
-                                        break;
-                                    }
-                                }
-                                if(isSumCol && cellValue != null && !cellValue.toString().isEmpty()){
-                                    try {
-                                        cell.setCellValue(Double.parseDouble(cellValue.toString().replace(",", "")));
-                                        cell.setCellStyle(totalsNumberStyle);
-                                    } catch (NumberFormatException e) {
-                                        cell.setCellValue(cellValue.toString());
-                                        cell.setCellStyle(totalsLabelStyle);
-                                    }
-                                } else {
-                                    cell.setCellValue("");
-                                    cell.setCellStyle(totalsLabelStyle);
-                                }
-                            }
-                        } else {
-                            if (cellValue != null) {
-                                if (col >= COL_ANNUAL_SALARY && col <= COL_TOTAL_MONTHLY_PAY ) {
-                                    try {
-                                        cell.setCellValue(Double.parseDouble(cellValue.toString().replace(",", "")));
-                                        cell.setCellStyle(numberStyle);
-                                    } catch (NumberFormatException e) {
-                                        cell.setCellValue(cellValue.toString());
-                                        if ("-".equals(cellValue.toString()) || "오류".equals(cellValue.toString())) {
-                                            cell.setCellStyle(centerDataStyle);
-                                        } else {
-                                            cell.setCellStyle(dataStyle);
-                                        }
-                                    }
-                                } else {
-                                    cell.setCellValue(cellValue.toString());
-                                    if(col == COL_NO || col == COL_HIRE_DATE || cellValue.toString().equals("-") || cellValue.toString().equals("*")) {
-                                        cell.setCellStyle(centerDataStyle);
-                                    } else {
-                                        cell.setCellStyle(dataStyle);
-                                    }
-                                }
-                            } else {
-                                cell.setCellStyle(dataStyle);
-                            }
-                        }
-                    }
-                    excelRowIdx++;
-                }
-
-                for (int col = 0; col < tableModel.getColumnCount(); col++) {
-                    sheet.autoSizeColumn(col);
-                }
-
-                try (FileOutputStream fileOut = new FileOutputStream(fileToSave)) {
-                    workbook.write(fileOut);
-                }
-                JOptionPane.showMessageDialog(this, "엑셀 파일이 성공적으로 저장되었습니다:\n" + fileToSave.getAbsolutePath(), "저장 완료", JOptionPane.INFORMATION_MESSAGE);
-
-            } catch (Exception ex) {
-                JOptionPane.showMessageDialog(this, "엑셀 파일 저장/생성 중 오류: " + ex.getMessage(), "오류", JOptionPane.ERROR_MESSAGE);
-                ex.printStackTrace();
+    private void deleteSelectedEmployee() {
+        if(selectedEmployeeDbId == -1) {
+            JOptionPane.showMessageDialog(this, "삭제할 직원을 테이블에서 선택해주세요.", "알림", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        int confirm = JOptionPane.showConfirmDialog(this, "'" + nameField.getText() + "' 직원의 모든 정보를 삭제하시겠습니까?", "삭제 확인", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if(confirm == JOptionPane.YES_OPTION) {
+            if(payrollManager.deleteEmployee(selectedEmployeeDbId)) {
+                JOptionPane.showMessageDialog(this, "직원 정보가 삭제되었습니다.", "삭제 완료", JOptionPane.INFORMATION_MESSAGE);
+                loadEmployeeTable("");
+                clearForm();
+            } else {
+                JOptionPane.showMessageDialog(this, "직원 정보 삭제에 실패했습니다.", "오류", JOptionPane.ERROR_MESSAGE);
             }
         }
     }
 
-    static class TotalsAwareNumberRenderer extends DefaultTableCellRenderer {
-        private Font normalFont;
-        private Font totalsFont;
+    private void createContract() {
+        if (selectedEmployeeDbId == -1) {
+            JOptionPane.showMessageDialog(this, "근로계약서를 작성할 직원을 선택해주세요.", "알림", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
 
-        public TotalsAwareNumberRenderer(Font normalFont, Font totalsFont) {
+        Employee emp = getEmployeeFromForm();
+        Payroll payroll = getPayrollFromForm();
+
+        payrollApp.showEmploymentContractPage(emp, payroll);
+    }
+
+    private Employee getEmployeeFromForm() {
+        LocalDate hire = null, salaryChange = null;
+        try { hire = LocalDate.parse(hireDateField.getText(), dateFormatter); } catch (Exception e) {}
+        try { salaryChange = LocalDate.parse(salaryChangeDateField.getText(), dateFormatter); } catch (Exception e) {}
+
+        Employee emp = new Employee(
+                nameField.getText(),
+                residentRegNoField.getText(),
+                phoneField.getText(),
+                parseFormattedNumber(annualSalaryField.getText()),
+                addressField.getText(),
+                hire, salaryChange,
+                (String)departmentComboBox.getSelectedItem(),
+                workLocationField.getText(),
+                siteLocationField.getText()
+        );
+        if(selectedEmployeeDbId != -1) emp.setId(selectedEmployeeDbId);
+        return emp;
+    }
+
+    private Payroll getPayrollFromForm() {
+        return new Payroll(
+                null,
+                parseFormattedNumber(monthlyBasicSalaryField.getText()),
+                parseFormattedNumber(bonusField.getText()),
+                parseFormattedNumber(fixedOvertimeAllowanceField.getText()),
+                parseFormattedNumber(otherAllowanceField.getText()),
+                parseFormattedNumber(mealAllowanceField.getText()),
+                parseFormattedNumber(vehicleMaintenanceFeeField.getText()),
+                parseFormattedNumber(researchDevelopmentExpenseField.getText()),
+                parseFormattedNumber(childcareAllowanceField.getText())
+        );
+    }
+
+    private Employee getEmployeeFromTableRow(int modelRow) {
+        Employee originalEmp = displayedEmployeesInTableOrder.get(modelRow);
+        LocalDate hire = null;
+        try { hire = LocalDate.parse(tableModel.getValueAt(modelRow, COL_HIRE_DATE).toString(), dateFormatter); } catch (Exception e) {}
+
+        Employee emp = new Employee(
+                tableModel.getValueAt(modelRow, COL_NAME).toString(),
+                tableModel.getValueAt(modelRow, COL_RESIDENT_REG_NO).toString(),
+                tableModel.getValueAt(modelRow, COL_PHONE).toString(),
+                (BigDecimal)tableModel.getValueAt(modelRow, COL_ANNUAL_SALARY),
+                tableModel.getValueAt(modelRow, COL_ADDRESS).toString(),
+                hire,
+                originalEmp.getSalaryChangeDate(),
+                tableModel.getValueAt(modelRow, COL_DEPARTMENT).toString(),
+                originalEmp.getWorkLocation(),
+                originalEmp.getSiteLocation()
+        );
+        emp.setId(originalEmp.getId());
+        return emp;
+    }
+
+    private Payroll getPayrollFromTableRow(int modelRow) {
+        Payroll payroll = new Payroll();
+        payroll.setMonthlyBasicSalary((BigDecimal)tableModel.getValueAt(modelRow, COL_MONTHLY_BASIC));
+        payroll.setFixedOvertimeAllowance((BigDecimal)tableModel.getValueAt(modelRow, COL_FIXED_OVERTIME));
+        payroll.setBonus((BigDecimal)tableModel.getValueAt(modelRow, COL_BONUS));
+        payroll.setOtherAllowance((BigDecimal)tableModel.getValueAt(modelRow, COL_OTHER_ALLOWANCE));
+        payroll.setMealAllowance((BigDecimal)tableModel.getValueAt(modelRow, COL_MEAL_ALLOWANCE));
+        payroll.setVehicleMaintenanceFee((BigDecimal)tableModel.getValueAt(modelRow, COL_VEHICLE_FEE));
+        payroll.setResearchDevelopmentExpense((BigDecimal)tableModel.getValueAt(modelRow, COL_RESEARCH_EXPENSE));
+        payroll.setChildcareAllowance((BigDecimal)tableModel.getValueAt(modelRow, COL_CHILDCARE_ALLOWANCE));
+        return payroll;
+    }
+
+    class TotalsAwareNumberRenderer extends DefaultTableCellRenderer {
+        private final Font normalFont;
+        private final Font totalsFont;
+        private final int[] numericColumnIndices;
+        private final DecimalFormat formatter = new DecimalFormat("#,###");
+
+        public TotalsAwareNumberRenderer(Font normalFont, Font totalsFont, int[] numericColumnIndices) {
             this.normalFont = normalFont;
             this.totalsFont = totalsFont;
+            this.numericColumnIndices = numericColumnIndices;
         }
 
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
             Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
 
-            boolean isTotalsRow = false;
-            if (table.getModel().getValueAt(row, COL_NO) != null &&
-                    table.getModel().getValueAt(row, COL_NO).equals("합계")) {
-                isTotalsRow = true;
-            }
+            boolean isTotalsRow = table.getValueAt(row, COL_NO) != null && "합계".equals(table.getValueAt(row, COL_NO).toString());
 
-            if (isTotalsRow) {
-                c.setFont(totalsFont);
-                c.setBackground(new Color(230, 230, 230));
-                if(isSelected) c.setBackground(table.getSelectionBackground().darker());
-            } else {
-                c.setFont(normalFont);
-                c.setBackground(isSelected ? table.getSelectionBackground() : table.getBackground());
-            }
-            c.setForeground(isSelected ? table.getSelectionForeground() : table.getForeground());
+            c.setFont(isTotalsRow ? totalsFont : normalFont);
+            c.setBackground(isSelected ? table.getSelectionBackground() : (isTotalsRow ? new Color(230, 240, 255) : Color.WHITE));
 
-
-            boolean isNumericColumn = false;
-            for(int sumIdx : ((EmployeeManagementPage) SwingUtilities.getAncestorOfClass(EmployeeManagementPage.class, table)).sumColumnIndices){
-                if(column == sumIdx){
-                    isNumericColumn = true;
+            boolean isNumeric = false;
+            for(int idx : numericColumnIndices) {
+                if(column == idx) {
+                    isNumeric = true;
                     break;
                 }
             }
 
-            if (isNumericColumn) {
-                if (value instanceof Number) {
-                    NumberFormat nf = NumberFormat.getNumberInstance(Locale.KOREA);
-                    setText(nf.format(value));
-                } else if (value instanceof String) {
-                    try {
-                        if (!"-".equals(value.toString()) && !value.toString().trim().isEmpty() && !"오류".equals(value.toString())) {
-                            String cleanedValue = ((String) value).replace(",", "");
-                            long numValue = Long.parseLong(cleanedValue);
-                            NumberFormat nf = NumberFormat.getNumberInstance(Locale.KOREA);
-                            setText(nf.format(numValue));
-                        } else {
-                            setText((String) value);
-                        }
-                    } catch (NumberFormatException e) {
-                        setText((String) value);
-                    }
-                } else if (value == null) {
-                    setText("");
-                } else {
-                    setText(value.toString());
-                }
+            if(isNumeric) {
                 setHorizontalAlignment(JLabel.RIGHT);
-            } else if (column == COL_NO || column == COL_HIRE_DATE) {
+                if(value instanceof BigDecimal) {
+                    setText(formatter.format(value));
+                } else if (value instanceof Number) {
+                    setText(formatter.format(value));
+                } else {
+                    setText(value != null ? value.toString() : "");
+                }
+            } else {
                 setHorizontalAlignment(JLabel.CENTER);
                 setText(value != null ? value.toString() : "");
-            } else {
-                setHorizontalAlignment(JLabel.LEFT);
-                setText(value != null ? value.toString() : "");
             }
+
             return c;
         }
     }

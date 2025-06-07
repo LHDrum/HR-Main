@@ -1,55 +1,49 @@
 package main;
 
+import java.math.BigDecimal;
+
 public class Payroll {
     private int id;
     private int employeeId;
-    private Employee employee; // 조인된 데이터용
+    private Employee employee;
 
     private Integer paymentYear;
     private Integer paymentMonth;
 
-    // 급여 항목
-    private int monthlyBasicSalary;
-    private int bonus;
-    private int fixedOvertimeAllowance;
-    private int additionalOvertimePremium;
-    private int otherAllowance;
-    private int mealAllowance;
-    private int vehicleMaintenanceFee;
-    private int researchDevelopmentExpense;
-    private int childcareAllowance;
+    private BigDecimal monthlyBasicSalary = BigDecimal.ZERO;
+    private BigDecimal bonus = BigDecimal.ZERO;
+    private BigDecimal fixedOvertimeAllowance = BigDecimal.ZERO;
+    private BigDecimal additionalOvertimePremium = BigDecimal.ZERO;
+    private BigDecimal otherAllowance = BigDecimal.ZERO;
+    private BigDecimal mealAllowance = BigDecimal.ZERO;
+    private BigDecimal vehicleMaintenanceFee = BigDecimal.ZERO;
+    private BigDecimal researchDevelopmentExpense = BigDecimal.ZERO;
+    private BigDecimal childcareAllowance = BigDecimal.ZERO;
 
-    // 근태 관련
     private int unpaidDays;
     private int unauthorizedAbsenceDays;
 
-    // --- 신규 추가: 공제 항목 ---
-    // 근로자 부담
-    private double nationalPensionEmployee;          // 국민연금
-    private double healthInsuranceEmployee;          // 건강보험
-    private double longTermCareInsuranceEmployee;    // 장기요양보험
-    private double employmentInsuranceEmployee;      // 고용보험
-    private double incomeTax;                        // 소득세
-    private double localIncomeTax;                   // 지방소득세
-    private double totalEmployeeDeduction;           // 근로자 공제 총액
+    private BigDecimal nationalPensionEmployee = BigDecimal.ZERO;
+    private BigDecimal healthInsuranceEmployee = BigDecimal.ZERO;
+    private BigDecimal longTermCareInsuranceEmployee = BigDecimal.ZERO;
+    private BigDecimal employmentInsuranceEmployee = BigDecimal.ZERO;
+    private BigDecimal incomeTax = BigDecimal.ZERO;
+    private BigDecimal localIncomeTax = BigDecimal.ZERO;
+    private BigDecimal totalEmployeeDeduction = BigDecimal.ZERO;
 
-    // 사업주 부담
-    private double nationalPensionEmployer;          // 국민연금
-    private double healthInsuranceEmployer;          // 건강보험
-    private double longTermCareInsuranceEmployer;    // 장기요양보험
-    private double employmentInsuranceEmployer;      // 고용보험
-    private double industrialAccidentInsuranceEmployer; // 산재보험
+    private BigDecimal nationalPensionEmployer = BigDecimal.ZERO;
+    private BigDecimal healthInsuranceEmployer = BigDecimal.ZERO;
+    private BigDecimal longTermCareInsuranceEmployer = BigDecimal.ZERO;
+    private BigDecimal employmentInsuranceEmployer = BigDecimal.ZERO;
+    private BigDecimal industrialAccidentInsuranceEmployer = BigDecimal.ZERO;
 
-    // 최종 지급액
-    private double netPay;                           // 실지급액
+    private BigDecimal netPay = BigDecimal.ZERO;
 
-    // 빈 생성자
     public Payroll() {}
 
-    // 생성자 1: 새 계약 급여 정보 생성용 (EmployeeManagementPage에서 사용)
-    public Payroll(Employee employee, int monthlyBasicSalary, int bonus,
-                   int fixedOvertimeAllowance, int otherAllowance, int mealAllowance,
-                   int vehicleMaintenanceFee, int researchDevelopmentExpense, int childcareAllowance) {
+    public Payroll(Employee employee, BigDecimal monthlyBasicSalary, BigDecimal bonus,
+                   BigDecimal fixedOvertimeAllowance, BigDecimal otherAllowance, BigDecimal mealAllowance,
+                   BigDecimal vehicleMaintenanceFee, BigDecimal researchDevelopmentExpense, BigDecimal childcareAllowance) {
         this.employee = employee;
         if (employee != null) {
             this.employeeId = employee.getId();
@@ -64,108 +58,91 @@ public class Payroll {
         this.childcareAllowance = childcareAllowance;
     }
 
-    // 생성자 2: DB에서 모든 데이터를 포함하여 불러올 때 사용 (확장됨)
-    public Payroll(int id, int employeeId, Integer paymentYear, Integer paymentMonth, int monthlyBasicSalary, int bonus, int fixedOvertimeAllowance, int additionalOvertimePremium, int otherAllowance, int mealAllowance, int vehicleMaintenanceFee, int researchDevelopmentExpense, int childcareAllowance, int unpaidDays, int unauthorizedAbsenceDays, double nationalPensionEmployee, double healthInsuranceEmployee, double longTermCareInsuranceEmployee, double employmentInsuranceEmployee, double incomeTax, double localIncomeTax, double totalEmployeeDeduction, double nationalPensionEmployer, double healthInsuranceEmployer, double longTermCareInsuranceEmployer, double employmentInsuranceEmployer, double industrialAccidentInsuranceEmployer, double netPay) {
-        this.id = id;
-        this.employeeId = employeeId;
-        this.paymentYear = paymentYear;
-        this.paymentMonth = paymentMonth;
-        this.monthlyBasicSalary = monthlyBasicSalary;
-        this.bonus = bonus;
-        this.fixedOvertimeAllowance = fixedOvertimeAllowance;
-        this.additionalOvertimePremium = additionalOvertimePremium;
-        this.otherAllowance = otherAllowance;
-        this.mealAllowance = mealAllowance;
-        this.vehicleMaintenanceFee = vehicleMaintenanceFee;
-        this.researchDevelopmentExpense = researchDevelopmentExpense;
-        this.childcareAllowance = childcareAllowance;
-        this.unpaidDays = unpaidDays;
-        this.unauthorizedAbsenceDays = unauthorizedAbsenceDays;
-        this.nationalPensionEmployee = nationalPensionEmployee;
-        this.healthInsuranceEmployee = healthInsuranceEmployee;
-        this.longTermCareInsuranceEmployee = longTermCareInsuranceEmployee;
-        this.employmentInsuranceEmployee = employmentInsuranceEmployee;
-        this.incomeTax = incomeTax;
-        this.localIncomeTax = localIncomeTax;
-        this.totalEmployeeDeduction = totalEmployeeDeduction;
-        this.nationalPensionEmployer = nationalPensionEmployer;
-        this.healthInsuranceEmployer = healthInsuranceEmployer;
-        this.longTermCareInsuranceEmployer = longTermCareInsuranceEmployer;
-        this.employmentInsuranceEmployer = employmentInsuranceEmployer;
-        this.industrialAccidentInsuranceEmployer = industrialAccidentInsuranceEmployer;
-        this.netPay = netPay;
+    /**
+     * 세전 총 급여(과세/비과세 포함)를 계산하여 반환합니다.
+     * @return 세전 총 급여
+     */
+    public BigDecimal getGrossPay() {
+        return (monthlyBasicSalary != null ? monthlyBasicSalary : BigDecimal.ZERO)
+                .add(bonus != null ? bonus : BigDecimal.ZERO)
+                .add(fixedOvertimeAllowance != null ? fixedOvertimeAllowance : BigDecimal.ZERO)
+                .add(additionalOvertimePremium != null ? additionalOvertimePremium : BigDecimal.ZERO)
+                .add(otherAllowance != null ? otherAllowance : BigDecimal.ZERO)
+                .add(mealAllowance != null ? mealAllowance : BigDecimal.ZERO)
+                .add(vehicleMaintenanceFee != null ? vehicleMaintenanceFee : BigDecimal.ZERO)
+                .add(researchDevelopmentExpense != null ? researchDevelopmentExpense : BigDecimal.ZERO)
+                .add(childcareAllowance != null ? childcareAllowance : BigDecimal.ZERO);
     }
 
+    /**
+     * 사업주가 부담하는 4대 보험료의 총합을 계산하여 반환합니다.
+     * @return 사업주 부담 보험료 총액
+     */
+    public BigDecimal getTotalEmployerDeduction() {
+        return (nationalPensionEmployer != null ? nationalPensionEmployer : BigDecimal.ZERO)
+                .add(healthInsuranceEmployer != null ? healthInsuranceEmployer : BigDecimal.ZERO)
+                .add(longTermCareInsuranceEmployer != null ? longTermCareInsuranceEmployer : BigDecimal.ZERO)
+                .add(employmentInsuranceEmployer != null ? employmentInsuranceEmployer : BigDecimal.ZERO)
+                .add(industrialAccidentInsuranceEmployer != null ? industrialAccidentInsuranceEmployer : BigDecimal.ZERO);
+    }
 
-    // Getters
+    // Getters and Setters
     public int getId() { return id; }
-    public int getEmployeeId() { return employeeId; }
-    public Employee getEmployee() { return employee; }
-    public Integer getPaymentYear() { return paymentYear; }
-    public Integer getPaymentMonth() { return paymentMonth; }
-    public int getMonthlyBasicSalary() { return monthlyBasicSalary; }
-    public int getBonus() { return bonus; }
-    public int getFixedOvertimeAllowance() { return fixedOvertimeAllowance; }
-    public int getAdditionalOvertimePremium() { return additionalOvertimePremium; }
-    public int getOtherAllowance() { return otherAllowance; }
-    public int getMealAllowance() { return mealAllowance; }
-    public int getVehicleMaintenanceFee() { return vehicleMaintenanceFee; }
-    public int getResearchDevelopmentExpense() { return researchDevelopmentExpense; }
-    public int getChildcareAllowance() { return childcareAllowance; }
-    public int getUnpaidDays() { return unpaidDays; }
-    public int getUnauthorizedAbsenceDays() { return unauthorizedAbsenceDays; }
-    public double getNationalPensionEmployee() { return nationalPensionEmployee; }
-    public double getHealthInsuranceEmployee() { return healthInsuranceEmployee; }
-    public double getLongTermCareInsuranceEmployee() { return longTermCareInsuranceEmployee; }
-    public double getEmploymentInsuranceEmployee() { return employmentInsuranceEmployee; }
-    public double getIncomeTax() { return incomeTax; }
-    public double getLocalIncomeTax() { return localIncomeTax; }
-    public double getTotalEmployeeDeduction() { return totalEmployeeDeduction; }
-    public double getNationalPensionEmployer() { return nationalPensionEmployer; }
-    public double getHealthInsuranceEmployer() { return healthInsuranceEmployer; }
-    public double getLongTermCareInsuranceEmployer() { return longTermCareInsuranceEmployer; }
-    public double getEmploymentInsuranceEmployer() { return employmentInsuranceEmployer; }
-    public double getIndustrialAccidentInsuranceEmployer() { return industrialAccidentInsuranceEmployer; }
-    public double getNetPay() { return netPay; }
-
-
-    // Setters
     public void setId(int id) { this.id = id; }
+    public int getEmployeeId() { return employeeId; }
     public void setEmployeeId(int employeeId) { this.employeeId = employeeId; }
+    public Employee getEmployee() { return employee; }
     public void setEmployee(Employee employee) { this.employee = employee; }
+    public Integer getPaymentYear() { return paymentYear; }
     public void setPaymentYear(Integer paymentYear) { this.paymentYear = paymentYear; }
+    public Integer getPaymentMonth() { return paymentMonth; }
     public void setPaymentMonth(Integer paymentMonth) { this.paymentMonth = paymentMonth; }
-    public void setMonthlyBasicSalary(int monthlyBasicSalary) { this.monthlyBasicSalary = monthlyBasicSalary; }
-    public void setBonus(int bonus) { this.bonus = bonus; }
-    public void setFixedOvertimeAllowance(int fixedOvertimeAllowance) { this.fixedOvertimeAllowance = fixedOvertimeAllowance; }
-    public void setAdditionalOvertimePremium(int additionalOvertimePremium) { this.additionalOvertimePremium = additionalOvertimePremium; }
-    public void setOtherAllowance(int otherAllowance) { this.otherAllowance = otherAllowance; }
-    public void setMealAllowance(int mealAllowance) { this.mealAllowance = mealAllowance; }
-    public void setVehicleMaintenanceFee(int vehicleMaintenanceFee) { this.vehicleMaintenanceFee = vehicleMaintenanceFee; }
-    public void setResearchDevelopmentExpense(int researchDevelopmentExpense) { this.researchDevelopmentExpense = researchDevelopmentExpense; }
-    public void setChildcareAllowance(int childcareAllowance) { this.childcareAllowance = childcareAllowance; }
+    public BigDecimal getMonthlyBasicSalary() { return monthlyBasicSalary; }
+    public void setMonthlyBasicSalary(BigDecimal monthlyBasicSalary) { this.monthlyBasicSalary = monthlyBasicSalary; }
+    public BigDecimal getBonus() { return bonus; }
+    public void setBonus(BigDecimal bonus) { this.bonus = bonus; }
+    public BigDecimal getFixedOvertimeAllowance() { return fixedOvertimeAllowance; }
+    public void setFixedOvertimeAllowance(BigDecimal fixedOvertimeAllowance) { this.fixedOvertimeAllowance = fixedOvertimeAllowance; }
+    public BigDecimal getAdditionalOvertimePremium() { return additionalOvertimePremium; }
+    public void setAdditionalOvertimePremium(BigDecimal additionalOvertimePremium) { this.additionalOvertimePremium = additionalOvertimePremium; }
+    public BigDecimal getOtherAllowance() { return otherAllowance; }
+    public void setOtherAllowance(BigDecimal otherAllowance) { this.otherAllowance = otherAllowance; }
+    public BigDecimal getMealAllowance() { return mealAllowance; }
+    public void setMealAllowance(BigDecimal mealAllowance) { this.mealAllowance = mealAllowance; }
+    public BigDecimal getVehicleMaintenanceFee() { return vehicleMaintenanceFee; }
+    public void setVehicleMaintenanceFee(BigDecimal vehicleMaintenanceFee) { this.vehicleMaintenanceFee = vehicleMaintenanceFee; }
+    public BigDecimal getResearchDevelopmentExpense() { return researchDevelopmentExpense; }
+    public void setResearchDevelopmentExpense(BigDecimal researchDevelopmentExpense) { this.researchDevelopmentExpense = researchDevelopmentExpense; }
+    public BigDecimal getChildcareAllowance() { return childcareAllowance; }
+    public void setChildcareAllowance(BigDecimal childcareAllowance) { this.childcareAllowance = childcareAllowance; }
+    public int getUnpaidDays() { return unpaidDays; }
     public void setUnpaidDays(int unpaidDays) { this.unpaidDays = unpaidDays; }
+    public int getUnauthorizedAbsenceDays() { return unauthorizedAbsenceDays; }
     public void setUnauthorizedAbsenceDays(int unauthorizedAbsenceDays) { this.unauthorizedAbsenceDays = unauthorizedAbsenceDays; }
-    public void setNationalPensionEmployee(double nationalPensionEmployee) { this.nationalPensionEmployee = nationalPensionEmployee; }
-    public void setHealthInsuranceEmployee(double healthInsuranceEmployee) { this.healthInsuranceEmployee = healthInsuranceEmployee; }
-    public void setLongTermCareInsuranceEmployee(double longTermCareInsuranceEmployee) { this.longTermCareInsuranceEmployee = longTermCareInsuranceEmployee; }
-    public void setEmploymentInsuranceEmployee(double employmentInsuranceEmployee) { this.employmentInsuranceEmployee = employmentInsuranceEmployee; }
-    public void setIncomeTax(double incomeTax) { this.incomeTax = incomeTax; }
-    public void setLocalIncomeTax(double localIncomeTax) { this.localIncomeTax = localIncomeTax; }
-    public void setTotalEmployeeDeduction(double totalEmployeeDeduction) { this.totalEmployeeDeduction = totalEmployeeDeduction; }
-    public void setNationalPensionEmployer(double nationalPensionEmployer) { this.nationalPensionEmployer = nationalPensionEmployer; }
-    public void setHealthInsuranceEmployer(double healthInsuranceEmployer) { this.healthInsuranceEmployer = healthInsuranceEmployer; }
-    public void setLongTermCareInsuranceEmployer(double longTermCareInsuranceEmployer) { this.longTermCareInsuranceEmployer = longTermCareInsuranceEmployer; }
-    public void setEmploymentInsuranceEmployer(double employmentInsuranceEmployer) { this.employmentInsuranceEmployer = employmentInsuranceEmployer; }
-    public void setIndustrialAccidentInsuranceEmployer(double industrialAccidentInsuranceEmployer) { this.industrialAccidentInsuranceEmployer = industrialAccidentInsuranceEmployer; }
-    public void setNetPay(double netPay) { this.netPay = netPay; }
-
-
-    // 세전 총 급여액을 반환하는 헬퍼 메서드
-    public int getGrossPay() {
-        return monthlyBasicSalary + bonus +
-                fixedOvertimeAllowance + otherAllowance + mealAllowance +
-                vehicleMaintenanceFee + researchDevelopmentExpense + childcareAllowance +
-                additionalOvertimePremium;
-    }
+    public BigDecimal getNationalPensionEmployee() { return nationalPensionEmployee; }
+    public void setNationalPensionEmployee(BigDecimal nationalPensionEmployee) { this.nationalPensionEmployee = nationalPensionEmployee; }
+    public BigDecimal getHealthInsuranceEmployee() { return healthInsuranceEmployee; }
+    public void setHealthInsuranceEmployee(BigDecimal healthInsuranceEmployee) { this.healthInsuranceEmployee = healthInsuranceEmployee; }
+    public BigDecimal getLongTermCareInsuranceEmployee() { return longTermCareInsuranceEmployee; }
+    public void setLongTermCareInsuranceEmployee(BigDecimal longTermCareInsuranceEmployee) { this.longTermCareInsuranceEmployee = longTermCareInsuranceEmployee; }
+    public BigDecimal getEmploymentInsuranceEmployee() { return employmentInsuranceEmployee; }
+    public void setEmploymentInsuranceEmployee(BigDecimal employmentInsuranceEmployee) { this.employmentInsuranceEmployee = employmentInsuranceEmployee; }
+    public BigDecimal getIncomeTax() { return incomeTax; }
+    public void setIncomeTax(BigDecimal incomeTax) { this.incomeTax = incomeTax; }
+    public BigDecimal getLocalIncomeTax() { return localIncomeTax; }
+    public void setLocalIncomeTax(BigDecimal localIncomeTax) { this.localIncomeTax = localIncomeTax; }
+    public BigDecimal getTotalEmployeeDeduction() { return totalEmployeeDeduction; }
+    public void setTotalEmployeeDeduction(BigDecimal totalEmployeeDeduction) { this.totalEmployeeDeduction = totalEmployeeDeduction; }
+    public BigDecimal getNationalPensionEmployer() { return nationalPensionEmployer; }
+    public void setNationalPensionEmployer(BigDecimal nationalPensionEmployer) { this.nationalPensionEmployer = nationalPensionEmployer; }
+    public BigDecimal getHealthInsuranceEmployer() { return healthInsuranceEmployer; }
+    public void setHealthInsuranceEmployer(BigDecimal healthInsuranceEmployer) { this.healthInsuranceEmployer = healthInsuranceEmployer; }
+    public BigDecimal getLongTermCareInsuranceEmployer() { return longTermCareInsuranceEmployer; }
+    public void setLongTermCareInsuranceEmployer(BigDecimal longTermCareInsuranceEmployer) { this.longTermCareInsuranceEmployer = longTermCareInsuranceEmployer; }
+    public BigDecimal getEmploymentInsuranceEmployer() { return employmentInsuranceEmployer; }
+    public void setEmploymentInsuranceEmployer(BigDecimal employmentInsuranceEmployer) { this.employmentInsuranceEmployer = employmentInsuranceEmployer; }
+    public BigDecimal getIndustrialAccidentInsuranceEmployer() { return industrialAccidentInsuranceEmployer; }
+    public void setIndustrialAccidentInsuranceEmployer(BigDecimal industrialAccidentInsuranceEmployer) { this.industrialAccidentInsuranceEmployer = industrialAccidentInsuranceEmployer; }
+    public BigDecimal getNetPay() { return netPay; }
+    public void setNetPay(BigDecimal netPay) { this.netPay = netPay; }
 }

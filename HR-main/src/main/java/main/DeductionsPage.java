@@ -4,12 +4,13 @@ import javax.swing.*;
 import javax.swing.border.TitledBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.math.BigDecimal;
 import java.text.DecimalFormat;
 import java.time.LocalDate;
-import java.time.YearMonth; // 이 줄을 추가합니다.
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Optional;
-import java.util.Comparator; // Comparator도 필요할 수 있으므로 추가합니다.
+import java.util.Comparator;
 
 public class DeductionsPage extends JPanel {
 
@@ -17,7 +18,6 @@ public class DeductionsPage extends JPanel {
     private Employee currentEmployee;
     private Payroll currentPayroll;
 
-    // UI Components
     private JComboBox<String> employeeComboBox;
     private JComboBox<Integer> yearComboBox;
     private JComboBox<String> monthComboBox;
@@ -34,20 +34,20 @@ public class DeductionsPage extends JPanel {
     private JLabel lblNetPayValue;
 
     private final DecimalFormat formatter = new DecimalFormat("#,###");
+    private DeductionResult lastDeductionResult;
 
-    // 업종별 산재보험요율 데이터 (예시)
     private static class IndustrialAccidentRate {
         String name;
-        double rate;
+        BigDecimal rate;
 
-        IndustrialAccidentRate(String name, double rate) {
+        IndustrialAccidentRate(String name, String rate) {
             this.name = name;
-            this.rate = rate;
+            this.rate = new BigDecimal(rate);
         }
 
         @Override
         public String toString() {
-            return name + " (" + (rate * 100) + "%)";
+            return name + " (" + rate.multiply(new BigDecimal("100")).stripTrailingZeros().toPlainString() + "%)";
         }
     }
 
@@ -96,7 +96,6 @@ public class DeductionsPage extends JPanel {
     private JPanel createCenterPanel() {
         JPanel panel = new JPanel(new BorderLayout(20, 10));
 
-        // 입력 패널
         JPanel inputPanel = new JPanel(new GridBagLayout());
         inputPanel.setBorder(BorderFactory.createTitledBorder("계산 조건 입력"));
         GridBagConstraints gbc = new GridBagConstraints();
@@ -114,9 +113,9 @@ public class DeductionsPage extends JPanel {
         inputPanel.add(new JLabel("산재보험 업종:"), gbc);
         gbc.gridx = 1; gbc.fill = GridBagConstraints.HORIZONTAL;
         rateComboBox = new JComboBox<>();
-        rateComboBox.addItem(new IndustrialAccidentRate("소프트웨어 개발", 0.007));
-        rateComboBox.addItem(new IndustrialAccidentRate("음식점업", 0.017));
-        rateComboBox.addItem(new IndustrialAccidentRate("건설업", 0.036));
+        rateComboBox.addItem(new IndustrialAccidentRate("소프트웨어 개발", "0.007"));
+        rateComboBox.addItem(new IndustrialAccidentRate("음식점업", "0.017"));
+        rateComboBox.addItem(new IndustrialAccidentRate("건설업", "0.036"));
         inputPanel.add(rateComboBox, gbc);
 
         gbc.gridx = 0; gbc.gridy = 2; gbc.fill = GridBagConstraints.NONE;
@@ -137,7 +136,6 @@ public class DeductionsPage extends JPanel {
         gbc.gridy = 4; gbc.weighty = 1.0;
         inputPanel.add(new JLabel(), gbc); // 여백
 
-        // 결과 패널
         JPanel resultPanel = new JPanel(new BorderLayout(10, 10));
         resultPanel.setBorder(BorderFactory.createTitledBorder("공제 내역 결과"));
 
@@ -175,7 +173,6 @@ public class DeductionsPage extends JPanel {
         int month = Integer.parseInt((String) monthComboBox.getSelectedItem());
 
         if (selectedName == null || selectedName.equals("등록된 직원이 없습니다.")) {
-            JOptionPane.showMessageDialog(this, "직원을 선택해주세요.", "알림", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
 
@@ -204,13 +201,13 @@ public class DeductionsPage extends JPanel {
             return;
         }
         try {
-            double grossPay = currentPayroll.getGrossPay();
+            BigDecimal grossPay = currentPayroll.getGrossPay();
             IndustrialAccidentRate selectedRate = (IndustrialAccidentRate) rateComboBox.getSelectedItem();
-            double accidentRate = (selectedRate != null) ? selectedRate.rate : 0.0;
+            BigDecimal accidentRate = (selectedRate != null) ? selectedRate.rate : BigDecimal.ZERO;
             int dependents = Integer.parseInt(txtDependents.getText());
 
-            DeductionResult result = DeductionCalculator.calculate(grossPay, accidentRate, dependents);
-            displayDeductionResult(result);
+            this.lastDeductionResult = DeductionCalculator.calculate(grossPay, accidentRate, dependents);
+            displayDeductionResult(this.lastDeductionResult);
 
         } catch (NumberFormatException e) {
             JOptionPane.showMessageDialog(this, "부양가족 수는 숫자로 입력해야 합니다.", "입력 오류", JOptionPane.ERROR_MESSAGE);
@@ -218,8 +215,8 @@ public class DeductionsPage extends JPanel {
     }
 
     private void saveDeductions() {
-        if (currentPayroll == null) {
-            JOptionPane.showMessageDialog(this, "저장할 데이터가 없습니다.", "오류", JOptionPane.ERROR_MESSAGE);
+        if (currentPayroll == null || lastDeductionResult == null) {
+            JOptionPane.showMessageDialog(this, "저장할 계산 결과가 없습니다. 먼저 '공제액 재계산'을 실행해주세요.", "오류", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -229,19 +226,14 @@ public class DeductionsPage extends JPanel {
         }
 
         IndustrialAccidentRate selectedRate = (IndustrialAccidentRate) rateComboBox.getSelectedItem();
-        double accidentRate = (selectedRate != null) ? selectedRate.rate : 0.0;
+        BigDecimal accidentRate = (selectedRate != null) ? selectedRate.rate : BigDecimal.ZERO;
         int dependents = Integer.parseInt(txtDependents.getText());
         int year = (int) yearComboBox.getSelectedItem();
         int month = Integer.parseInt((String) monthComboBox.getSelectedItem());
 
-        // PayrollManager의 finalize 메서드를 재활용하여 DB에 저장
         payrollManager.finalizeMonthlyPayAndDeductions(
                 currentEmployee.getId(), YearMonth.of(year, month),
-                currentPayroll.getMonthlyBasicSalary(), currentPayroll.getFixedOvertimeAllowance(), currentPayroll.getAdditionalOvertimePremium(),
-                currentPayroll.getBonus(), currentPayroll.getOtherAllowance(), currentPayroll.getMealAllowance(),
-                currentPayroll.getVehicleMaintenanceFee(), currentPayroll.getResearchDevelopmentExpense(), currentPayroll.getChildcareAllowance(),
-                accidentRate, dependents,
-                currentPayroll.getUnpaidDays(), currentPayroll.getUnauthorizedAbsenceDays()
+                currentPayroll, accidentRate, dependents
         );
 
         JOptionPane.showMessageDialog(this, "공제액 정보가 성공적으로 저장되었습니다.", "저장 완료", JOptionPane.INFORMATION_MESSAGE);
@@ -258,15 +250,14 @@ public class DeductionsPage extends JPanel {
         result.incomeTax = payroll.getIncomeTax();
         result.localIncomeTax = payroll.getLocalIncomeTax();
         result.totalEmployeeDeduction = payroll.getTotalEmployeeDeduction();
-
         result.nationalPensionEmployer = payroll.getNationalPensionEmployer();
         result.healthInsuranceEmployer = payroll.getHealthInsuranceEmployer();
         result.longTermCareInsuranceEmployer = payroll.getLongTermCareInsuranceEmployer();
         result.employmentInsuranceEmployer = payroll.getEmploymentInsuranceEmployer();
         result.industrialAccidentInsuranceEmployer = payroll.getIndustrialAccidentInsuranceEmployer();
-
         result.netPay = payroll.getNetPay();
 
+        this.lastDeductionResult = result;
         displayDeductionResult(result);
     }
 
@@ -277,29 +268,30 @@ public class DeductionsPage extends JPanel {
         addRow("건강보험", result.healthInsuranceEmployee, result.healthInsuranceEmployer);
         addRow("장기요양보험", result.longTermCareInsuranceEmployee, result.longTermCareInsuranceEmployer);
         addRow("고용보험", result.employmentInsuranceEmployee, result.employmentInsuranceEmployer);
-        addRow("산재보험", 0, result.industrialAccidentInsuranceEmployer);
+        addRow("산재보험", BigDecimal.ZERO, result.industrialAccidentInsuranceEmployer);
         tableModel.addRow(new String[]{"-", "-", "-"});
-        addRow("소득세", result.incomeTax, 0);
-        addRow("지방소득세", result.localIncomeTax, 0);
+        addRow("소득세", result.incomeTax, BigDecimal.ZERO);
+        addRow("지방소득세", result.localIncomeTax, BigDecimal.ZERO);
         tableModel.addRow(new String[]{"-", "-", "-"});
 
-        double totalEmployer = result.nationalPensionEmployer + result.healthInsuranceEmployer + result.longTermCareInsuranceEmployer + result.employmentInsuranceEmployer + result.industrialAccidentInsuranceEmployer;
+        BigDecimal totalEmployer = result.nationalPensionEmployer.add(result.healthInsuranceEmployer).add(result.longTermCareInsuranceEmployer).add(result.employmentInsuranceEmployer).add(result.industrialAccidentInsuranceEmployer);
         addRow("합계", result.totalEmployeeDeduction, totalEmployer);
 
-        lblNetPayValue.setText(formatter.format(Math.round(result.netPay)) + " 원");
+        lblNetPayValue.setText(formatter.format(result.netPay) + " 원");
     }
 
-    private void addRow(String item, double employeeVal, double employerVal) {
+    private void addRow(String item, BigDecimal employeeVal, BigDecimal employerVal) {
         tableModel.addRow(new String[]{
                 item,
-                formatter.format(Math.round(employeeVal)),
-                formatter.format(Math.round(employerVal))
+                formatter.format(employeeVal),
+                formatter.format(employerVal)
         });
     }
 
     private void clearData() {
         currentEmployee = null;
         currentPayroll = null;
+        lastDeductionResult = null;
         lblGrossPayValue.setText("0 원");
         txtDependents.setText("1");
         tableModel.setRowCount(0);
