@@ -164,8 +164,10 @@ public class AttendancePage extends JPanel {
         leftBottomPanel.add(calendarButtonPanel, BorderLayout.SOUTH);
         leftPanel.add(leftBottomPanel, BorderLayout.SOUTH);
 
-        int calendarPreferredHeight = (int) (450 * FONT_SCALE_FACTOR);
-        leftPanel.setPreferredSize(new Dimension((int) (calendarPanel.getPreferredSize().width * 1.1), calendarPreferredHeight));
+        // [수정] 달력 패널의 고정된 높이 설정을 제거하여 달력이 내용에 맞게 크기를 조절하도록 함
+        // int calendarPreferredHeight = (int) (450 * FONT_SCALE_FACTOR);
+        // leftPanel.setPreferredSize(new Dimension((int) (calendarPanel.getPreferredSize().width * 1.1), calendarPreferredHeight));
+
         contentPanel.add(leftPanel, BorderLayout.WEST);
 
         JPanel rightPanel = new JPanel(new BorderLayout((int) (10 * FONT_SCALE_FACTOR), (int) (10 * FONT_SCALE_FACTOR)));
@@ -258,7 +260,8 @@ public class AttendancePage extends JPanel {
 
         JScrollPane workLogTableScrollPane = new JScrollPane(workLogTable);
 
-        rightPanel.setPreferredSize(new Dimension((int) (rightPanel.getPreferredSize().width * 1.1), calendarPreferredHeight));
+        // [수정] 오른쪽 패널의 고정 높이 설정을 제거 (달력 패널과 높이를 맞추기 위함)
+        // rightPanel.setPreferredSize(new Dimension((int) (rightPanel.getPreferredSize().width * 1.1), calendarPreferredHeight));
         rightPanel.add(workLogTableScrollPane, BorderLayout.CENTER);
 
         JPanel tableControlPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, (int) (5 * FONT_SCALE_FACTOR), (int) (5 * FONT_SCALE_FACTOR)));
@@ -295,7 +298,7 @@ public class AttendancePage extends JPanel {
         contentPanel.add(rightPanel, BorderLayout.CENTER);
 
         gbcRoot.gridy = 1;
-        gbcRoot.weighty = 0;
+        gbcRoot.weighty = 1.0; // [수정] 달력과 테이블 영역이 세로 공간을 차지하도록 weight_y를 1로 변경
         gbcRoot.fill = GridBagConstraints.BOTH;
         add(contentPanel, gbcRoot);
 
@@ -345,8 +348,8 @@ public class AttendancePage extends JPanel {
         bottomOuterPanel.add(resultsDisplayPanel, BorderLayout.CENTER);
 
         gbcRoot.gridy = 2;
-        gbcRoot.weighty = 1.0;
-        gbcRoot.fill = GridBagConstraints.BOTH;
+        gbcRoot.weighty = 0; // [수정] 하단 결과 패널은 고정된 크기를 갖도록 weight_y를 0으로 변경
+        gbcRoot.fill = GridBagConstraints.HORIZONTAL;
         add(bottomOuterPanel, gbcRoot);
 
         addListeners();
@@ -617,6 +620,7 @@ public class AttendancePage extends JPanel {
     }
 
     private void updateDetailedWorkdayLabels() {
+        if (calendarPanel == null) return; // Null check to prevent initialization order issues
         List<Map<String, Object>> datesInfo = calendarPanel.getSelectedDatesWithStatus();
         long calendarWeekdays = 0;
         long actualWorkWeekdays = 0;
@@ -758,11 +762,9 @@ public class AttendancePage extends JPanel {
             if (status == WorkStatus.ABSENCE) absenceDaysCount++;
         }
 
-        // [수정] Payroll 객체를 생성하여 전달
         Payroll finalPayroll = new Payroll();
         CalculationResult res = lastCalculationResult;
 
-        // 급여 정보 설정
         finalPayroll.setMonthlyBasicSalary(res.getFinalAdjustedBasicPay());
         finalPayroll.setFixedOvertimeAllowance(res.getFinalAdjustedFixedOvertimeAllowance());
         finalPayroll.setAdditionalOvertimePremium(res.getFinalAdjustedAdditionalOvertimePremium());
@@ -773,18 +775,16 @@ public class AttendancePage extends JPanel {
         finalPayroll.setResearchDevelopmentExpense(res.getFinalAdjustedResearchDevelopmentExpense());
         finalPayroll.setChildcareAllowance(res.getFinalAdjustedChildcareAllowance());
 
-        // 근태 정보 설정
         finalPayroll.setUnpaidDays((int) unpaidDaysCount);
         finalPayroll.setUnauthorizedAbsenceDays((int) absenceDaysCount);
 
         try {
-            // [수정] 변경된 메소드 시그니처에 맞게 호출
             payrollManager.finalizeMonthlyPayAndDeductions(
                     currentEmployee.getId(),
                     calendarPanel.getCurrentYearMonth(),
                     finalPayroll,
-                    new BigDecimal("0.007"), // 산재보험료율은 추후 설정에서 가져오도록 변경 가능
-                    1 // 부양가족 수도 직원 정보에서 가져오도록 변경 가능
+                    new BigDecimal("0.007"),
+                    1
             );
 
             JOptionPane.showMessageDialog(this, "급여 정보가 성공적으로 저장되었습니다.", "저장 완료", JOptionPane.INFORMATION_MESSAGE);

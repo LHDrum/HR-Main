@@ -11,6 +11,7 @@ import com.itextpdf.layout.element.Paragraph;
 import com.itextpdf.layout.element.Table;
 import com.itextpdf.layout.properties.TextAlignment;
 import com.itextpdf.layout.properties.UnitValue;
+
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.util.zip.ZipEntry;
@@ -43,11 +44,12 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.text.DecimalFormat;
-import java.text.NumberFormat;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -74,12 +76,9 @@ public class SummaryPage extends JPanel {
             "공제 총액(B)", "실지급액(A-B)"
     };
 
-    // 합계를 계산할 열의 인덱스
     private final int[] currencyColumnIndicesForSum = {2, 3, 4, 5, 6, 7, 8, 9, 10};
-
     private java.awt.Font 일반데이터폰트;
     private java.awt.Font 합계행폰트;
-
 
     public SummaryPage(PayrollManager payrollManager, PayrollApp payrollApp) {
         this.payrollManager = payrollManager;
@@ -221,7 +220,6 @@ public class SummaryPage extends JPanel {
 
         periodPayrolls.sort(Comparator.comparing(p -> p.getEmployee().getName()));
 
-        // [수정] 합계 계산을 위해 long[] 대신 BigDecimal[] 사용
         BigDecimal[] columnTotals = new BigDecimal[columnNames.length];
         for (int i = 0; i < columnTotals.length; i++) {
             columnTotals[i] = BigDecimal.ZERO;
@@ -253,7 +251,6 @@ public class SummaryPage extends JPanel {
                 rowData[9] = df.format(payroll.getTotalEmployeeDeduction());
                 rowData[10] = df.format(payroll.getNetPay());
 
-                // [수정] BigDecimal 합산
                 columnTotals[2] = columnTotals[2].add(payroll.getGrossPay());
                 columnTotals[3] = columnTotals[3].add(payroll.getNationalPensionEmployee());
                 columnTotals[4] = columnTotals[4].add(payroll.getHealthInsuranceEmployee());
@@ -319,7 +316,7 @@ public class SummaryPage extends JPanel {
     }
 
     private void exportTableToExcel() {
-        if (lastQueriedYear == null || lastQueriedMonth == null || tableModel.getRowCount() <= 1) { // 합계행만 있는 경우 제외
+        if (lastQueriedYear == null || lastQueriedMonth == null || tableModel.getRowCount() <= 1) {
             JOptionPane.showMessageDialog(this, "내보낼 데이터가 없습니다. 먼저 데이터를 조회해주세요.", "알림", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
@@ -343,8 +340,8 @@ public class SummaryPage extends JPanel {
                 List<Payroll> payrolls = payrollManager.getPayrollsForPeriod(lastQueriedYear, lastQueriedMonth);
                 payrolls.sort(Comparator.comparing(p -> p.getEmployee().getName()));
 
-                createSummarySheet(workbook, payrolls);
-                createEmployerContributionSheet(workbook, payrolls);
+                createDetailedPayrollLedgerSheet(workbook, payrolls); // 상세 급여대장 시트 생성
+                createEmployerContributionSheet(workbook, payrolls);  // 사업자 부담분 시트 생성
 
                 try (FileOutputStream fileOut = new FileOutputStream(fileToSave)) {
                     workbook.write(fileOut);
@@ -357,59 +354,79 @@ public class SummaryPage extends JPanel {
         }
     }
 
-    private void createSummarySheet(XSSFWorkbook workbook, List<Payroll> payrolls) {
-        Sheet sheet = workbook.createSheet("급여대장");
+    private void createDetailedPayrollLedgerSheet(XSSFWorkbook workbook, List<Payroll> payrolls) {
+        Sheet sheet = workbook.createSheet("상세급여대장");
         CellStyle headerStyle = createHeaderStyle(workbook);
         DataFormat excelDataFormat = workbook.createDataFormat();
         CellStyle textStyle = createDataStyle(workbook, HorizontalAlignment.CENTER);
         CellStyle currencyStyle = createNumberStyle(workbook, excelDataFormat, "#,##0");
 
-        // 헤더 생성
+        String[] headers = {
+                "No.", "성명", "부서", "기본급", "고정연장수당", "추가수당", "상여금", "기타수당", "식대", "차량유지비", "연구개발비", "육아수당", "지급총액",
+                "국민연금", "건강보험", "장기요양", "고용보험", "소득세", "지방소득세", "공제총액", "실지급액"
+        };
+
         Row headerRow = sheet.createRow(0);
-        for (int col = 0; col < columnNames.length; col++) {
-            Cell cell = headerRow.createCell(col);
-            cell.setCellValue(columnNames[col]);
+        for (int i = 0; i < headers.length; i++) {
+            Cell cell = headerRow.createCell(i);
+            cell.setCellValue(headers[i]);
             cell.setCellStyle(headerStyle);
         }
 
-        // 데이터 행 생성
         int rowNum = 1;
-        BigDecimal[] totals = new BigDecimal[columnNames.length];
+        BigDecimal[] totals = new BigDecimal[headers.length];
         for(int i=0; i<totals.length; i++) totals[i] = BigDecimal.ZERO;
 
         for (Payroll p : payrolls) {
             Row row = sheet.createRow(rowNum++);
             createCell(row, 0, rowNum - 1, textStyle);
             createCell(row, 1, p.getEmployee().getName(), textStyle);
+            createCell(row, 2, p.getEmployee().getDepartment(), textStyle);
 
-            boolean isUnpaid = p.getGrossPay().compareTo(BigDecimal.ZERO) == 0;
-            if(isUnpaid) {
-                createCell(row, 2, "무급 휴직", textStyle);
-                for (int i = 3; i < columnNames.length; i++) createCell(row, i, "-", textStyle);
+            if(p.getGrossPay().compareTo(BigDecimal.ZERO) == 0) {
+                createCell(row, 12, "무급 휴직", textStyle);
             } else {
-                createNumericCell(row, 2, p.getGrossPay(), currencyStyle);
-                createNumericCell(row, 3, p.getNationalPensionEmployee(), currencyStyle);
-                createNumericCell(row, 4, p.getHealthInsuranceEmployee(), currencyStyle);
-                createNumericCell(row, 5, p.getLongTermCareInsuranceEmployee(), currencyStyle);
-                createNumericCell(row, 6, p.getEmploymentInsuranceEmployee(), currencyStyle);
-                createNumericCell(row, 7, p.getIncomeTax(), currencyStyle);
-                createNumericCell(row, 8, p.getLocalIncomeTax(), currencyStyle);
-                createNumericCell(row, 9, p.getTotalEmployeeDeduction(), currencyStyle);
-                createNumericCell(row, 10, p.getNetPay(), currencyStyle);
+                createNumericCell(row, 3, p.getMonthlyBasicSalary(), currencyStyle);
+                createNumericCell(row, 4, p.getFixedOvertimeAllowance(), currencyStyle);
+                createNumericCell(row, 5, p.getAdditionalOvertimePremium(), currencyStyle);
+                createNumericCell(row, 6, p.getBonus(), currencyStyle);
+                createNumericCell(row, 7, p.getOtherAllowance(), currencyStyle);
+                createNumericCell(row, 8, p.getMealAllowance(), currencyStyle);
+                createNumericCell(row, 9, p.getVehicleMaintenanceFee(), currencyStyle);
+                createNumericCell(row, 10, p.getResearchDevelopmentExpense(), currencyStyle);
+                createNumericCell(row, 11, p.getChildcareAllowance(), currencyStyle);
+                createNumericCell(row, 12, p.getGrossPay(), currencyStyle);
+                createNumericCell(row, 13, p.getNationalPensionEmployee(), currencyStyle);
+                createNumericCell(row, 14, p.getHealthInsuranceEmployee(), currencyStyle);
+                createNumericCell(row, 15, p.getLongTermCareInsuranceEmployee(), currencyStyle);
+                createNumericCell(row, 16, p.getEmploymentInsuranceEmployee(), currencyStyle);
+                createNumericCell(row, 17, p.getIncomeTax(), currencyStyle);
+                createNumericCell(row, 18, p.getLocalIncomeTax(), currencyStyle);
+                createNumericCell(row, 19, p.getTotalEmployeeDeduction(), currencyStyle);
+                createNumericCell(row, 20, p.getNetPay(), currencyStyle);
 
-                totals[2] = totals[2].add(p.getGrossPay());
-                totals[3] = totals[3].add(p.getNationalPensionEmployee());
-                totals[4] = totals[4].add(p.getHealthInsuranceEmployee());
-                totals[5] = totals[5].add(p.getLongTermCareInsuranceEmployee());
-                totals[6] = totals[6].add(p.getEmploymentInsuranceEmployee());
-                totals[7] = totals[7].add(p.getIncomeTax());
-                totals[8] = totals[8].add(p.getLocalIncomeTax());
-                totals[9] = totals[9].add(p.getTotalEmployeeDeduction());
-                totals[10] = totals[10].add(p.getNetPay());
+                // 합계 계산
+                totals[3] = totals[3].add(p.getMonthlyBasicSalary());
+                totals[4] = totals[4].add(p.getFixedOvertimeAllowance());
+                totals[5] = totals[5].add(p.getAdditionalOvertimePremium());
+                totals[6] = totals[6].add(p.getBonus());
+                totals[7] = totals[7].add(p.getOtherAllowance());
+                totals[8] = totals[8].add(p.getMealAllowance());
+                totals[9] = totals[9].add(p.getVehicleMaintenanceFee());
+                totals[10] = totals[10].add(p.getResearchDevelopmentExpense());
+                totals[11] = totals[11].add(p.getChildcareAllowance());
+                totals[12] = totals[12].add(p.getGrossPay());
+                totals[13] = totals[13].add(p.getNationalPensionEmployee());
+                totals[14] = totals[14].add(p.getHealthInsuranceEmployee());
+                totals[15] = totals[15].add(p.getLongTermCareInsuranceEmployee());
+                totals[16] = totals[16].add(p.getEmploymentInsuranceEmployee());
+                totals[17] = totals[17].add(p.getIncomeTax());
+                totals[18] = totals[18].add(p.getLocalIncomeTax());
+                totals[19] = totals[19].add(p.getTotalEmployeeDeduction());
+                totals[20] = totals[20].add(p.getNetPay());
             }
         }
 
-        // 합계 행 생성
         CellStyle totalStyle = createNumberStyle(workbook, excelDataFormat, "#,##0");
         totalStyle.setFont(createBoldFont(workbook));
         totalStyle.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
@@ -418,11 +435,14 @@ public class SummaryPage extends JPanel {
         Row totalRow = sheet.createRow(rowNum);
         createCell(totalRow, 0, "합계", totalStyle);
         createCell(totalRow, 1, "", totalStyle);
-        for(int i=2; i<totals.length; i++) {
+        createCell(totalRow, 2, "", totalStyle);
+        for(int i=3; i<totals.length; i++) {
             createNumericCell(totalRow, i, totals[i], totalStyle);
         }
 
-        for (int i = 0; i < columnNames.length; i++) sheet.autoSizeColumn(i);
+        for (int i = 0; i < headers.length; i++) {
+            sheet.autoSizeColumn(i);
+        }
     }
 
     private void createEmployerContributionSheet(XSSFWorkbook workbook, List<Payroll> payrolls) {
@@ -455,7 +475,6 @@ public class SummaryPage extends JPanel {
             createNumericCell(row, 4, p.getEmploymentInsuranceEmployer(), currencyStyle);
             createNumericCell(row, 5, p.getIndustrialAccidentInsuranceEmployer(), currencyStyle);
 
-            // [수정] .add()를 사용하여 BigDecimal 합산
             BigDecimal employerTotal = p.getTotalEmployerDeduction();
             createNumericCell(row, 6, employerTotal, currencyStyle);
 
@@ -571,6 +590,7 @@ public class SummaryPage extends JPanel {
                 .setFontSize(20).setBold().setTextAlignment(TextAlignment.CENTER));
         document.add(new Paragraph("\n"));
 
+        // 사용자 정보 테이블
         Table infoTable = new Table(UnitValue.createPercentArray(new float[]{1, 2, 1, 2}));
         infoTable.setWidth(UnitValue.createPercentValue(100));
         infoTable.addCell(createPdfCell("성명:", true));
@@ -578,8 +598,33 @@ public class SummaryPage extends JPanel {
         infoTable.addCell(createPdfCell("부서:", true));
         infoTable.addCell(createPdfCell(payroll.getEmployee().getDepartment(), false));
         document.add(infoTable);
+
+        // [수정] 입사일, 근무일수, 계산방식 등 추가 정보 테이블
+        Table detailsTable = new Table(UnitValue.createPercentArray(new float[]{1, 5}));
+        detailsTable.setWidth(UnitValue.createPercentValue(100)).setMarginTop(5);
+
+        LocalDate hireDate = payroll.getEmployee().getHireDate();
+        detailsTable.addCell(createPdfCell("입사일:", true));
+        detailsTable.addCell(createPdfCell(hireDate != null ? hireDate.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) : "-", false));
+
+        YearMonth period = YearMonth.of(lastQueriedYear, lastQueriedMonth);
+        long totalWeekdays = 0;
+        for(int i=1; i<=period.lengthOfMonth(); i++) {
+            DayOfWeek dow = period.atDay(i).getDayOfWeek();
+            if(dow != DayOfWeek.SATURDAY && dow != DayOfWeek.SUNDAY) {
+                totalWeekdays++;
+            }
+        }
+        int absenceDays = payroll.getUnauthorizedAbsenceDays() + payroll.getUnpaidDays();
+        detailsTable.addCell(createPdfCell("근무 정보:", true));
+        detailsTable.addCell(createPdfCell(String.format("총 평일 %d일, 실근무 %d일 (결근/무급 %d일)", totalWeekdays, totalWeekdays - absenceDays, absenceDays), false));
+
+        detailsTable.addCell(createPdfCell("급여 산정:", true));
+        detailsTable.addCell(createPdfCell("월 총 근로시간 224시간 기준 (기본 209시간 + 고정연장 15시간)", false));
+        document.add(detailsTable);
         document.add(new Paragraph("\n"));
 
+        // 지급/공제 테이블
         Table mainTable = new Table(UnitValue.createPercentArray(new float[]{50, 50}));
         mainTable.setWidth(UnitValue.createPercentValue(100));
         mainTable.addHeaderCell(new com.itextpdf.layout.element.Cell().add(new Paragraph("지급 내역")).setBold().setFontSize(12));
@@ -588,7 +633,7 @@ public class SummaryPage extends JPanel {
         Table earningsTable = new Table(UnitValue.createPercentArray(new float[]{50, 50}));
         addEarningItem(earningsTable, "기본급", payroll.getMonthlyBasicSalary(), df);
         addEarningItem(earningsTable, "고정연장수당", payroll.getFixedOvertimeAllowance(), df);
-        addEarningItem(earningsTable, "추가 연장 수당", payroll.getAdditionalOvertimePremium(), df);
+        addEarningItem(earningsTable, "추가수당", payroll.getAdditionalOvertimePremium(), df);
         addEarningItem(earningsTable, "상여금", payroll.getBonus(), df);
         addEarningItem(earningsTable, "기타수당", payroll.getOtherAllowance(), df);
         addEarningItem(earningsTable, "식대", payroll.getMealAllowance(), df);
@@ -633,6 +678,7 @@ public class SummaryPage extends JPanel {
         if (isBold) cell.setBold();
         cell.setTextAlignment(alignment);
         cell.setBorder(null);
+        cell.setPadding(2);
         return cell;
     }
 
@@ -668,8 +714,6 @@ public class SummaryPage extends JPanel {
         font.setBold(true);
         return font;
     }
-
-
 
     private void setBorders(CellStyle style, BorderStyle borderStyle) {
         style.setBorderTop(borderStyle);
