@@ -23,30 +23,32 @@ import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableColumnModel;
 import javax.swing.table.TableModel;
 import javax.swing.table.TableRowSorter;
+import javax.swing.text.AbstractDocument;
+import javax.swing.text.AttributeSet;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.DocumentFilter;
 import javax.swing.text.JTextComponent;
+import javax.swing.text.Document;
 import java.awt.*;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.awt.event.ItemEvent;
 import java.awt.event.KeyEvent;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.DecimalFormat;
-import java.text.NumberFormat;
 import java.text.ParseException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 
@@ -77,6 +79,8 @@ public class EmployeeManagementPage extends JPanel {
     private List<Employee> displayedEmployeesInTableOrder;
     private Set<Integer> modifiedRowModelIndices;
 
+    private boolean isFormModified = false;
+
     private final DecimalFormat numberFormatter = new DecimalFormat("#,###");
     private final DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private boolean isUpdatingFromForm = false;
@@ -88,7 +92,6 @@ public class EmployeeManagementPage extends JPanel {
     private java.awt.Font enlargedFontBold;
     private java.awt.Font totalsRowFont;
 
-    private static final BigDecimal HOURS_FOR_BASIC_PAY_CALC = new BigDecimal("209.0");
     private static final BigDecimal TOTAL_WORK_HOURS_DIVISOR = new BigDecimal("224.0");
     private static final BigDecimal FIXED_OVERTIME_HOURS_PARAM = new BigDecimal("10.0");
     private static final BigDecimal OT_MULTIPLIER = new BigDecimal("1.5");
@@ -151,184 +154,79 @@ public class EmployeeManagementPage extends JPanel {
         }
     }
 
-    private void applyDateFormatting(JTextField dateField) {
-        if (isProgrammaticChange) return;
-
-        final String originalText = dateField.getText();
-        final int originalCaretPos = dateField.getCaretPosition();
-
-        String digits = originalText.replaceAll("[^0-9]", "");
-        String formattedText = digits;
-
-        if (digits.length() >= 5) {
-            formattedText = digits.substring(0, 4) + "-" + digits.substring(4);
+    private BigDecimal parseValueToBigDecimal(Object value) {
+        if (value instanceof BigDecimal) {
+            return (BigDecimal) value;
         }
-        if (digits.length() >= 7) {
-            String monthPart = digits.substring(4, Math.min(6, digits.length()));
-            if(digits.length() > 4 + monthPart.length()) {
-                formattedText = digits.substring(0, 4) + "-" + monthPart + "-" + digits.substring(4 + monthPart.length());
-            } else {
-                formattedText = digits.substring(0, 4) + "-" + monthPart;
-            }
+        if (value == null || value.toString().trim().isEmpty()) {
+            return BigDecimal.ZERO;
         }
-
-        if (formattedText.length() > 10) {
-            formattedText = formattedText.substring(0, 10);
-        }
-
-        if (!originalText.equals(formattedText)) {
-            isProgrammaticChange = true;
-            final String finalTextToSet = formattedText;
-
-            SwingUtilities.invokeLater(() -> {
-                dateField.setText(finalTextToSet);
-                int newCaretPos = originalCaretPos;
-                int hyphensInOriginal = (int) originalText.chars().filter(c -> c == '-').count();
-                int hyphensInFormatted = (int) finalTextToSet.chars().filter(c -> c == '-').count();
-                int diffHyphens = hyphensInFormatted - hyphensInOriginal;
-
-                if (diffHyphens > 0) {
-                    int originalDigitsBeforeCaret = 0;
-                    for (int i = 0; i < originalCaretPos; i++) {
-                        if (Character.isDigit(originalText.charAt(i))) {
-                            originalDigitsBeforeCaret++;
-                        }
-                    }
-                    int currentDigitsCounted = 0;
-                    int tempNewPos = 0;
-                    for (int i = 0; i < finalTextToSet.length(); i++) {
-                        tempNewPos = i + 1;
-                        if (Character.isDigit(finalTextToSet.charAt(i))) {
-                            currentDigitsCounted++;
-                        }
-                        if (currentDigitsCounted == originalDigitsBeforeCaret) {
-                            if (tempNewPos < finalTextToSet.length() && finalTextToSet.charAt(tempNewPos-1) != '-' &&
-                                    finalTextToSet.charAt(tempNewPos) == '-' &&
-                                    (originalText.length() < finalTextToSet.length() ||
-                                            (originalText.length() >=tempNewPos && originalText.charAt(tempNewPos) != '-'))) {
-                                newCaretPos = tempNewPos +1;
-                                break;
-                            } else {
-                                newCaretPos = tempNewPos;
-                                break;
-                            }
-                        }
-                    }
-                    if (currentDigitsCounted < originalDigitsBeforeCaret) {
-                        newCaretPos = finalTextToSet.length();
-                    }
-                } else if (diffHyphens < 0) {
-                    newCaretPos = Math.min(originalCaretPos, finalTextToSet.length());
-                } else {
-                    newCaretPos = originalCaretPos;
-                }
-                dateField.setCaretPosition(Math.min(newCaretPos, finalTextToSet.length()));
-                isProgrammaticChange = false;
-            });
-        }
+        return parseFormattedNumber(value.toString());
     }
 
+    private class AutoFormattingFilter extends DocumentFilter {
+        private final int maxDigits;
+        private final String formatType;
 
-    private void applyResidentRegNoFormatting(JTextField field) {
-        if (isProgrammaticChange) return;
-        final String originalText = field.getText();
-        final int originalCaretPos = field.getCaretPosition();
-
-        String text = originalText.replaceAll("[^0-9]", "");
-        String formattedText = text;
-
-        if (text.length() >= 7) {
-            formattedText = text.substring(0, 6) + "-" + text.substring(6);
-        }
-        if (formattedText.length() > 14) {
-            formattedText = formattedText.substring(0, 14);
+        public AutoFormattingFilter(int maxDigits, String formatType) {
+            this.maxDigits = maxDigits;
+            this.formatType = formatType;
         }
 
-        if (!originalText.equals(formattedText)) {
-            isProgrammaticChange = true;
-            final String finalTextToSet = formattedText;
-            SwingUtilities.invokeLater(() -> {
-                field.setText(finalTextToSet);
-                int newCaretPos = originalCaretPos;
-                if (finalTextToSet.length() > originalText.length() && originalText.length() == 6 && originalCaretPos == 6 && finalTextToSet.charAt(6) == '-') {
-                    newCaretPos = 7;
-                } else if (finalTextToSet.length() < originalText.length() && originalCaretPos > finalTextToSet.length()){
-                    newCaretPos = finalTextToSet.length();
-                } else if (finalTextToSet.length() > originalText.length()){
-                    if (originalCaretPos >=6 && finalTextToSet.indexOf('-') == 6) newCaretPos++;
-                }
-                field.setCaretPosition(Math.min(newCaretPos, finalTextToSet.length()));
-                isProgrammaticChange = false;
-            });
-        }
-    }
+        @Override
+        public void replace(FilterBypass fb, int offset, int length, String text, AttributeSet attrs) throws BadLocationException {
+            Document doc = fb.getDocument();
+            String currentText = doc.getText(0, doc.getLength());
+            String newText = currentText.substring(0, offset) + (text == null ? "" : text) + currentText.substring(offset + length);
+            String digits = newText.replaceAll("\\D", "");
 
-    private void applyPhoneFormatting(JTextField field) {
-        if (isProgrammaticChange) return;
-        final String originalTextInField = field.getText();
-        final int originalCaretPos = field.getCaretPosition();
-
-        String text = originalTextInField.replaceAll("[^0-9]", "");
-        String formattedText = text;
-
-        if (text.length() >= 2) {
-            if (text.startsWith("02")) {
-                if (text.length() <= 2) formattedText = text;
-                else if (text.length() <= 6) formattedText = text.substring(0, 2) + "-" + text.substring(2);
-                else if (text.length() <= 10) formattedText = text.substring(0, 2) + "-" + text.substring(2, Math.min(6, text.length())) + "-" + text.substring(Math.min(6, text.length()));
-                else formattedText = text.substring(0, 2) + "-" + text.substring(2, 6) + "-" + text.substring(6, 10);
-            } else if (text.startsWith("010")) {
-                if (text.length() <= 3) formattedText = text;
-                else if (text.length() <= 7) formattedText = text.substring(0, 3) + "-" + text.substring(3);
-                else if (text.length() <= 11) formattedText = text.substring(0, 3) + "-" + text.substring(3, Math.min(7, text.length())) + "-" + text.substring(Math.min(7, text.length()));
-                else formattedText = text.substring(0, 3) + "-" + text.substring(3, 7) + "-" + text.substring(7, 11);
-            } else {
-                if (text.length() <= 3) { formattedText = text; }
-                else if (text.length() <= 7) { formattedText = text.substring(0,3) + "-" + text.substring(3); }
-                else if (text.length() <=11) { formattedText = text.substring(0,3) + "-" + text.substring(3, Math.min(7, text.length())) + "-" + text.substring(Math.min(7, text.length()));}
-                else { formattedText = text.substring(0,3) + "-" + text.substring(3, 7) + "-" + text.substring(7, 11); }
+            if (digits.length() > maxDigits) {
+                return;
             }
-        }
-        if (formattedText.length() > 13) {
-            formattedText = formattedText.substring(0, 13);
+
+            String formatted = "";
+            switch (formatType) {
+                case "RRN": formatted = formatRRN(digits); break;
+                case "PHONE": formatted = formatPhone(digits); break;
+                case "DATE": formatted = formatDate(digits); break;
+                default: formatted = digits; break;
+            }
+
+            fb.replace(0, doc.getLength(), formatted, attrs);
         }
 
-        if (!originalTextInField.equals(formattedText)) {
-            isProgrammaticChange = true;
-            final String fTextToSet = formattedText;
-            SwingUtilities.invokeLater(() -> {
-                field.setText(fTextToSet);
-                int newCaretPos = originalCaretPos;
-                int hyphensInOriginal = (int) originalTextInField.chars().filter(ch -> ch == '-').count();
-                int hyphensInFormatted = (int) fTextToSet.chars().filter(ch -> ch == '-').count();
-                int diffHyphens = hyphensInFormatted - hyphensInOriginal;
+        @Override
+        public void insertString(FilterBypass fb, int offset, String string, AttributeSet attr) throws BadLocationException {
+            replace(fb, offset, 0, string, attr);
+        }
 
-                if (diffHyphens != 0) {
-                    int digitsBeforeCaretOriginal = 0;
-                    for (int i = 0; i < originalCaretPos; i++) {
-                        if (Character.isDigit(originalTextInField.charAt(i))) {
-                            digitsBeforeCaretOriginal++;
-                        }
-                    }
-                    int currentDigits = 0;
-                    newCaretPos = fTextToSet.length();
-                    for (int i = 0; i < fTextToSet.length(); i++) {
-                        if (Character.isDigit(fTextToSet.charAt(i))) {
-                            currentDigits++;
-                        }
-                        if (currentDigits == digitsBeforeCaretOriginal) {
-                            if (i + 1 < fTextToSet.length() && fTextToSet.charAt(i + 1) == '-' && diffHyphens > 0 && originalCaretPos == i + 1 - diffHyphens) {
-                                newCaretPos = i + 2;
-                            } else {
-                                newCaretPos = i + 1;
-                            }
-                            break;
-                        }
-                    }
-                }
-                field.setCaretPosition(Math.max(0, Math.min(newCaretPos, fTextToSet.length())));
-                isProgrammaticChange = false;
-            });
+        @Override
+        public void remove(FilterBypass fb, int offset, int length) throws BadLocationException {
+            replace(fb, offset, length, "", null);
+        }
+
+        private String formatRRN(String digits) {
+            if (digits.length() > 6) return digits.substring(0, 6) + "-" + digits.substring(6);
+            return digits;
+        }
+
+        private String formatDate(String digits) {
+            if (digits.length() > 6) return digits.substring(0, 4) + "-" + digits.substring(4, 6) + "-" + digits.substring(6);
+            if (digits.length() > 4) return digits.substring(0, 4) + "-" + digits.substring(4);
+            return digits;
+        }
+
+        private String formatPhone(String digits) {
+            if (digits.length() < 3) return digits;
+            if (digits.startsWith("02")) {
+                if (digits.length() < 7) return "02-" + digits.substring(2);
+                if (digits.length() <= 10) return "02-" + digits.substring(2, Math.min(6, digits.length() - 4)) + "-" + digits.substring(digits.length() - 4);
+                return "02-1234-5678"; // fallback for > 10
+            } else {
+                if (digits.length() < 8) return digits.substring(0, 3) + "-" + digits.substring(3);
+                if (digits.length() <= 11) return digits.substring(0, 3) + "-" + digits.substring(3, Math.min(7, digits.length() - 4)) + "-" + digits.substring(digits.length() - 4);
+                return "010-1234-5678"; // fallback for > 11
+            }
         }
     }
 
@@ -630,6 +528,7 @@ public class EmployeeManagementPage extends JPanel {
         addButton.setFont(enlargedFont);
         updateButton = new JButton("수정사항 저장");
         updateButton.setFont(enlargedFont);
+        updateButton.setEnabled(false);
         deleteButton = new JButton("직원 삭제");
         deleteButton.setFont(enlargedFont);
         clearButton = new JButton("입력 초기화");
@@ -650,7 +549,9 @@ public class EmployeeManagementPage extends JPanel {
         String[] tableColumnNames = { "No.", "입사일", "이름", "부서", "주민번호", "전화번호", "주소", "연봉", "기본급", "고정연장수당", "추가 연장 수당", "상여금", "기타수당", "식대", "차량유지비", "연구개발비", "육아수당", "총 월 급여" };
         tableModel = new DefaultTableModel(tableColumnNames, 0) {
             @Override public boolean isCellEditable(int row, int column) {
-                if (getRowCount() > 0 && getValueAt(row, COL_NO) != null && getValueAt(row, COL_NO).toString().equals("합계")) {
+                if (getRowCount() <= 0 || row >= getRowCount()) return false;
+                Object noValue = getValueAt(row, COL_NO);
+                if (noValue != null && noValue.toString().equals("합계")) {
                     return false;
                 }
                 switch (column) {
@@ -672,14 +573,12 @@ public class EmployeeManagementPage extends JPanel {
                 boolean result = super.editCellAt(row, column, e);
                 if (result) {
                     final Component editor = getEditorComponent();
-                    if (editor != null && editor instanceof JTextComponent) {
+                    if (editor instanceof JTextComponent) {
                         if (e instanceof KeyEvent) {
-                            KeyEvent ke = (KeyEvent) e;
-                            ((JTextComponent) editor).setText(String.valueOf(ke.getKeyChar()));
+                            ((JTextComponent) editor).setText(String.valueOf(((KeyEvent) e).getKeyChar()));
                         } else {
                             SwingUtilities.invokeLater(((JTextComponent) editor)::selectAll);
                         }
-                        ((JTextComponent) editor).requestFocusInWindow();
                     }
                 }
                 return result;
@@ -728,6 +627,159 @@ public class EmployeeManagementPage extends JPanel {
         JScrollPane scrollPane = new JScrollPane(employeeTable);
         add(scrollPane, BorderLayout.CENTER);
     }
+
+    private void addFormListeners() {
+        ((AbstractDocument) hireDateField.getDocument()).setDocumentFilter(new AutoFormattingFilter(8, "DATE"));
+        ((AbstractDocument) salaryChangeDateField.getDocument()).setDocumentFilter(new AutoFormattingFilter(8, "DATE"));
+        ((AbstractDocument) residentRegNoField.getDocument()).setDocumentFilter(new AutoFormattingFilter(13, "RRN"));
+        ((AbstractDocument) phoneField.getDocument()).setDocumentFilter(new AutoFormattingFilter(11, "PHONE"));
+
+        DocumentListener formEditListener = new DocumentListener() {
+            private void handleUpdate() {
+                if (isProgrammaticChange || isUpdatingFromForm) return;
+                isFormModified = true;
+                updateButton.setEnabled(true);
+                recalculateSalaryComponents();
+            }
+            public void insertUpdate(DocumentEvent e) { handleUpdate(); }
+            public void removeUpdate(DocumentEvent e) { handleUpdate(); }
+            public void changedUpdate(DocumentEvent e) { handleUpdate(); }
+        };
+
+        Component[] employeeInfoComponents = ((JPanel)nameField.getParent()).getComponents();
+        for(Component c : employeeInfoComponents) {
+            if (c instanceof JTextField) {
+                ((JTextField)c).getDocument().addDocumentListener(formEditListener);
+            }
+        }
+
+        Component[] salaryInfoComponents = ((JPanel)annualSalaryField.getParent()).getComponents();
+        for(Component c : salaryInfoComponents) {
+            if (c instanceof JTextField && ((JTextField)c).isEditable()) {
+                ((JTextField)c).getDocument().addDocumentListener(formEditListener);
+            }
+        }
+
+        departmentComboBox.addItemListener(e -> {
+            if (e.getStateChange() == ItemEvent.SELECTED && !isProgrammaticChange && !isUpdatingFromForm) {
+                isFormModified = true;
+                updateButton.setEnabled(true);
+            }
+        });
+
+        FocusAdapter numericFormatter = new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                formatNumericFieldOnFocusLost((JTextField)e.getSource());
+            }
+        };
+
+        annualSalaryField.addFocusListener(numericFormatter);
+        bonusField.addFocusListener(numericFormatter);
+        otherAllowanceField.addFocusListener(numericFormatter);
+        mealAllowanceField.addFocusListener(numericFormatter);
+        vehicleMaintenanceFeeField.addFocusListener(numericFormatter);
+        researchDevelopmentExpenseField.addFocusListener(numericFormatter);
+        childcareAllowanceField.addFocusListener(numericFormatter);
+
+        searchButton.addActionListener(e -> loadEmployeeTable(searchField.getText()));
+        clearButton.addActionListener(e -> clearForm());
+        backButton.addActionListener(e -> returnToSummaryPage.run());
+        addButton.addActionListener(e -> addEmployee());
+        updateButton.addActionListener(e -> saveChanges());
+        deleteButton.addActionListener(e -> deleteSelectedEmployee());
+        createContractButton.addActionListener(e -> createContract());
+        addRowButton.addActionListener(e -> {
+            tableModel.insertRow(tableModel.getRowCount() - 1, new Object[tableModel.getColumnCount()]);
+        });
+    }
+
+    private void saveChanges() {
+        if (employeeTable.isEditing() && !employeeTable.getCellEditor().stopCellEditing()) {
+            JOptionPane.showMessageDialog(this, "셀 입력 값에 오류가 있습니다. 수정을 완료하거나 취소해주세요.", "입력 오류", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        Set<Integer> employeeIdsToUpdate = new HashSet<>();
+        if (isFormModified && selectedEmployeeDbId != -1) {
+            employeeIdsToUpdate.add(selectedEmployeeDbId);
+        }
+        for (int modelRow : modifiedRowModelIndices) {
+            if (modelRow < displayedEmployeesInTableOrder.size()) {
+                employeeIdsToUpdate.add(displayedEmployeesInTableOrder.get(modelRow).getId());
+            }
+        }
+
+        if (employeeIdsToUpdate.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "수정된 항목이 없습니다.", "알림", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        int successCount = 0;
+        Set<String> failedNames = new HashSet<>();
+
+        for (int empId : employeeIdsToUpdate) {
+            try {
+                Employee empToSave;
+                Payroll payrollToSave;
+
+                if (empId == selectedEmployeeDbId) {
+                    empToSave = getEmployeeFromForm();
+                    payrollToSave = getPayrollFromForm();
+                } else {
+                    int modelRow = findModelRowByEmployeeId(empId);
+                    if (modelRow == -1) continue;
+
+                    empToSave = getEmployeeFromTableRow(modelRow);
+                    BigDecimal annualSalary = empToSave.getAnnualSalary();
+                    BigDecimal monthlyGross = annualSalary.divide(new BigDecimal("12"), 0, RoundingMode.HALF_UP);
+                    BigDecimal hourlyRate = monthlyGross.divide(TOTAL_WORK_HOURS_DIVISOR, 0, RoundingMode.HALF_UP);
+                    BigDecimal fixedOvertime = hourlyRate.multiply(FIXED_OVERTIME_HOURS_PARAM).multiply(OT_MULTIPLIER).setScale(0, RoundingMode.HALF_UP);
+                    BigDecimal basicPay = monthlyGross.subtract(fixedOvertime);
+
+                    payrollToSave = getPayrollFromTableRow(modelRow);
+                    payrollToSave.setMonthlyBasicSalary(basicPay);
+                    payrollToSave.setFixedOvertimeAllowance(fixedOvertime);
+                }
+
+                if (payrollManager.updateEmployee(empToSave, payrollToSave)) {
+                    successCount++;
+                } else {
+                    failedNames.add(empToSave.getName());
+                }
+            } catch (Exception ex) {
+                ex.printStackTrace();
+                payrollManager.getAllEmployees().stream()
+                        .filter(e -> e.getId() == empId).findFirst()
+                        .ifPresent(e -> failedNames.add(e.getName() + " (" + ex.getMessage() + ")"));
+            }
+        }
+
+        if (failedNames.isEmpty()) {
+            JOptionPane.showMessageDialog(this, successCount + "명의 직원 정보가 성공적으로 수정되었습니다.", "수정 완료", JOptionPane.INFORMATION_MESSAGE);
+        } else {
+            JOptionPane.showMessageDialog(this,
+                    "성공: " + successCount + "건\n실패: " + failedNames.size() + "건 (직원: " + String.join(", ", failedNames) + ")",
+                    "부분 성공", JOptionPane.ERROR_MESSAGE);
+        }
+
+        modifiedRowModelIndices.clear();
+        isFormModified = false;
+        updateButton.setEnabled(false);
+        updateButton.setText("수정사항 저장");
+        loadEmployeeTable(searchField.getText());
+    }
+
+    private int findModelRowByEmployeeId(int empId) {
+        for (int i = 0; i < displayedEmployeesInTableOrder.size(); i++) {
+            if (displayedEmployeesInTableOrder.get(i).getId() == empId) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    // ... 이하 나머지 코드는 이전과 동일 ...
 
     public void loadEmployeeTable(String searchTerm) {
         isUpdatingFromTable = true;
@@ -791,80 +843,17 @@ public class EmployeeManagementPage extends JPanel {
         isUpdatingFromTable = false;
     }
 
-    private void addFormListeners() {
-        DocumentListener recalculateListener = new DocumentListener() {
-            public void insertUpdate(DocumentEvent e) { if(!isProgrammaticChange) recalculateSalaryComponents(); }
-            public void removeUpdate(DocumentEvent e) { if(!isProgrammaticChange) recalculateSalaryComponents(); }
-            public void changedUpdate(DocumentEvent e) { if(!isProgrammaticChange) recalculateSalaryComponents(); }
-        };
-
-        annualSalaryField.getDocument().addDocumentListener(recalculateListener);
-        bonusField.getDocument().addDocumentListener(recalculateListener);
-        otherAllowanceField.getDocument().addDocumentListener(recalculateListener);
-        mealAllowanceField.getDocument().addDocumentListener(recalculateListener);
-        vehicleMaintenanceFeeField.getDocument().addDocumentListener(recalculateListener);
-        researchDevelopmentExpenseField.getDocument().addDocumentListener(recalculateListener);
-        childcareAllowanceField.getDocument().addDocumentListener(recalculateListener);
-
-        FocusAdapter numericFormatter = new FocusAdapter() {
-            @Override
-            public void focusLost(FocusEvent e) {
-                formatNumericFieldOnFocusLost((JTextField)e.getSource());
-            }
-        };
-
-        annualSalaryField.addFocusListener(numericFormatter);
-        bonusField.addFocusListener(numericFormatter);
-        otherAllowanceField.addFocusListener(numericFormatter);
-        mealAllowanceField.addFocusListener(numericFormatter);
-        vehicleMaintenanceFeeField.addFocusListener(numericFormatter);
-        researchDevelopmentExpenseField.addFocusListener(numericFormatter);
-        childcareAllowanceField.addFocusListener(numericFormatter);
-
-        hireDateField.getDocument().addDocumentListener(new DocumentListener() {
-            public void insertUpdate(DocumentEvent e) { applyDateFormatting(hireDateField); }
-            public void removeUpdate(DocumentEvent e) { /* Do nothing on remove to prevent weird behavior */ }
-            public void changedUpdate(DocumentEvent e) {}
-        });
-        salaryChangeDateField.getDocument().addDocumentListener(new DocumentListener() {
-            public void insertUpdate(DocumentEvent e) { applyDateFormatting(salaryChangeDateField); }
-            public void removeUpdate(DocumentEvent e) { /* Do nothing */ }
-            public void changedUpdate(DocumentEvent e) {}
-        });
-        residentRegNoField.getDocument().addDocumentListener(new DocumentListener() {
-            public void insertUpdate(DocumentEvent e) { applyResidentRegNoFormatting(residentRegNoField); }
-            public void removeUpdate(DocumentEvent e) { /* Do nothing */ }
-            public void changedUpdate(DocumentEvent e) {}
-        });
-        phoneField.getDocument().addDocumentListener(new DocumentListener() {
-            public void insertUpdate(DocumentEvent e) { applyPhoneFormatting(phoneField); }
-            public void removeUpdate(DocumentEvent e) { /* Do nothing */ }
-            public void changedUpdate(DocumentEvent e) {}
-        });
-
-        searchButton.addActionListener(e -> loadEmployeeTable(searchField.getText()));
-        clearButton.addActionListener(e -> clearForm());
-        backButton.addActionListener(e -> returnToSummaryPage.run());
-        addButton.addActionListener(e -> addEmployee());
-        updateButton.addActionListener(e -> updateAllModifiedEmployees());
-        deleteButton.addActionListener(e -> deleteSelectedEmployee());
-        createContractButton.addActionListener(e -> createContract());
-        addRowButton.addActionListener(e -> {
-            tableModel.insertRow(tableModel.getRowCount() - 1, new Object[tableModel.getColumnCount()]);
-        });
-    }
-
     private void addTableListeners() {
         employeeTable.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && !isUpdatingFromForm) {
                 int selectedViewRow = employeeTable.getSelectedRow();
                 if (selectedViewRow != -1) {
                     int modelRow = employeeTable.convertRowIndexToModel(selectedViewRow);
-                    if(modelRow < displayedEmployeesInTableOrder.size()){
+                    if(modelRow >= 0 && modelRow < displayedEmployeesInTableOrder.size()){
                         Employee emp = displayedEmployeesInTableOrder.get(modelRow);
                         Optional<Payroll> payrollOpt = payrollManager.getContractualPayroll(emp.getId());
                         payrollOpt.ifPresent(p -> {
-                            selectedEmployeeDbId = emp.getId(); // Set the selected ID
+                            selectedEmployeeDbId = emp.getId();
                             populateForm(emp, p);
                         });
                     } else {
@@ -875,16 +864,18 @@ public class EmployeeManagementPage extends JPanel {
         });
 
         tableModel.addTableModelListener(e -> {
-            if (e.getType() == TableModelEvent.UPDATE && !isUpdatingFromForm) {
-                modifiedRowModelIndices.add(e.getFirstRow());
+            if (e.getType() == TableModelEvent.UPDATE && !isUpdatingFromForm && !isUpdatingFromTable) {
+                int modelRow = e.getFirstRow();
+                if (modelRow >= displayedEmployeesInTableOrder.size()) return;
+
+                modifiedRowModelIndices.add(modelRow);
                 updateButton.setEnabled(true);
-                updateButton.setText("수정사항 저장(" + modifiedRowModelIndices.size() + ")");
             }
         });
     }
 
     private void recalculateSalaryComponents() {
-        if(isUpdatingFromForm || isProgrammaticChange) return;
+        if(isProgrammaticChange) return;
 
         try {
             BigDecimal annualSalary = parseFormattedNumber(annualSalaryField.getText());
@@ -923,14 +914,12 @@ public class EmployeeManagementPage extends JPanel {
         isProgrammaticChange = true;
         selectedEmployeeDbId = -1;
 
-        // Form panel 1
-        for(Component c : ((Container)nameField.getParent()).getComponents()){
+        for(Component c : ((JPanel)nameField.getParent()).getComponents()){
             if(c instanceof JTextField) ((JTextField) c).setText("");
         }
         departmentComboBox.setSelectedIndex(0);
 
-        // Form panel 2
-        for(Component c : ((Container)annualSalaryField.getParent()).getComponents()){
+        for(Component c : ((JPanel)annualSalaryField.getParent()).getComponents()){
             if(c instanceof JTextField) ((JTextField) c).setText("");
         }
 
@@ -941,11 +930,13 @@ public class EmployeeManagementPage extends JPanel {
         isProgrammaticChange = false;
         recalculateSalaryComponents();
         employeeTable.clearSelection();
+        isFormModified = false;
+        updateButton.setEnabled(false);
     }
 
     private void populateForm(Employee emp, Payroll payroll) {
-        isUpdatingFromForm = true;
         isProgrammaticChange = true;
+        isUpdatingFromForm = true;
 
         hireDateField.setText(emp.getHireDate() != null ? emp.getHireDate().format(dateFormatter) : "");
         salaryChangeDateField.setText(emp.getSalaryChangeDate() != null ? emp.getSalaryChangeDate().format(dateFormatter) : "");
@@ -971,23 +962,17 @@ public class EmployeeManagementPage extends JPanel {
         BigDecimal hourlyRate = monthlyGrossFromAnnual.divide(TOTAL_WORK_HOURS_DIVISOR, 0, RoundingMode.HALF_UP);
         hourlyWageField.setText(formatNumber(hourlyRate));
 
-        BigDecimal totalPay = payroll.getMonthlyBasicSalary()
-                .add(payroll.getFixedOvertimeAllowance())
-                .add(payroll.getBonus())
-                .add(payroll.getOtherAllowance())
-                .add(payroll.getMealAllowance())
-                .add(payroll.getVehicleMaintenanceFee())
-                .add(payroll.getResearchDevelopmentExpense())
-                .add(payroll.getChildcareAllowance());
-        totalMonthlyPayField.setText(formatNumber(totalPay));
+        totalMonthlyPayField.setText(formatNumber(payroll.getGrossPay()));
 
         isProgrammaticChange = false;
         isUpdatingFromForm = false;
+        isFormModified = false;
+        updateButton.setEnabled(false);
     }
 
     private void addEmployee() {
-        if(nameField.getText().trim().isEmpty() || residentRegNoField.getText().trim().length() != 14 || annualSalaryField.getText().isEmpty()) {
-            JOptionPane.showMessageDialog(this, "이름, 주민번호, 연봉은 필수 입력 항목입니다.", "입력 오류", JOptionPane.ERROR_MESSAGE);
+        if(nameField.getText().trim().isEmpty() || residentRegNoField.getText().trim().length() < 14 || annualSalaryField.getText().isEmpty()) {
+            JOptionPane.showMessageDialog(this, "이름, 주민번호(13자리), 연봉은 필수 입력 항목입니다.", "입력 오류", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -1001,28 +986,6 @@ public class EmployeeManagementPage extends JPanel {
         } else {
             JOptionPane.showMessageDialog(this, "직원 등록에 실패했습니다. (주민번호 중복 등)", "등록 실패", JOptionPane.ERROR_MESSAGE);
         }
-    }
-
-    private void updateAllModifiedEmployees() {
-        if(modifiedRowModelIndices.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "수정된 항목이 없습니다.", "알림", JOptionPane.INFORMATION_MESSAGE);
-            return;
-        }
-
-        int successCount = 0;
-        for(Integer modelRow : modifiedRowModelIndices) {
-            Employee emp = getEmployeeFromTableRow(modelRow);
-            Payroll payroll = getPayrollFromTableRow(modelRow);
-            if(payrollManager.updateEmployee(emp, payroll)) {
-                successCount++;
-            }
-        }
-
-        JOptionPane.showMessageDialog(this, String.format("%d건의 수정사항 중 %d건이 성공적으로 반영되었습니다.", modifiedRowModelIndices.size(), successCount), "수정 완료", JOptionPane.INFORMATION_MESSAGE);
-        modifiedRowModelIndices.clear();
-        updateButton.setText("수정사항 저장");
-        updateButton.setEnabled(false);
-        loadEmployeeTable(searchField.getText());
     }
 
     private void deleteSelectedEmployee() {
@@ -1075,6 +1038,7 @@ public class EmployeeManagementPage extends JPanel {
     }
 
     private Payroll getPayrollFromForm() {
+        recalculateSalaryComponents();
         return new Payroll(
                 null,
                 parseFormattedNumber(monthlyBasicSalaryField.getText()),
@@ -1091,13 +1055,18 @@ public class EmployeeManagementPage extends JPanel {
     private Employee getEmployeeFromTableRow(int modelRow) {
         Employee originalEmp = displayedEmployeesInTableOrder.get(modelRow);
         LocalDate hire = null;
-        try { hire = LocalDate.parse(tableModel.getValueAt(modelRow, COL_HIRE_DATE).toString(), dateFormatter); } catch (Exception e) {}
+        try {
+            Object dateObj = tableModel.getValueAt(modelRow, COL_HIRE_DATE);
+            if (dateObj != null && !dateObj.toString().isEmpty()) {
+                hire = LocalDate.parse(dateObj.toString(), dateFormatter);
+            }
+        } catch (Exception e) {}
 
         Employee emp = new Employee(
                 tableModel.getValueAt(modelRow, COL_NAME).toString(),
                 tableModel.getValueAt(modelRow, COL_RESIDENT_REG_NO).toString(),
                 tableModel.getValueAt(modelRow, COL_PHONE).toString(),
-                (BigDecimal)tableModel.getValueAt(modelRow, COL_ANNUAL_SALARY),
+                parseValueToBigDecimal(tableModel.getValueAt(modelRow, COL_ANNUAL_SALARY)),
                 tableModel.getValueAt(modelRow, COL_ADDRESS).toString(),
                 hire,
                 originalEmp.getSalaryChangeDate(),
@@ -1111,14 +1080,14 @@ public class EmployeeManagementPage extends JPanel {
 
     private Payroll getPayrollFromTableRow(int modelRow) {
         Payroll payroll = new Payroll();
-        payroll.setMonthlyBasicSalary((BigDecimal)tableModel.getValueAt(modelRow, COL_MONTHLY_BASIC));
-        payroll.setFixedOvertimeAllowance((BigDecimal)tableModel.getValueAt(modelRow, COL_FIXED_OVERTIME));
-        payroll.setBonus((BigDecimal)tableModel.getValueAt(modelRow, COL_BONUS));
-        payroll.setOtherAllowance((BigDecimal)tableModel.getValueAt(modelRow, COL_OTHER_ALLOWANCE));
-        payroll.setMealAllowance((BigDecimal)tableModel.getValueAt(modelRow, COL_MEAL_ALLOWANCE));
-        payroll.setVehicleMaintenanceFee((BigDecimal)tableModel.getValueAt(modelRow, COL_VEHICLE_FEE));
-        payroll.setResearchDevelopmentExpense((BigDecimal)tableModel.getValueAt(modelRow, COL_RESEARCH_EXPENSE));
-        payroll.setChildcareAllowance((BigDecimal)tableModel.getValueAt(modelRow, COL_CHILDCARE_ALLOWANCE));
+        payroll.setMonthlyBasicSalary(parseValueToBigDecimal(tableModel.getValueAt(modelRow, COL_MONTHLY_BASIC)));
+        payroll.setFixedOvertimeAllowance(parseValueToBigDecimal(tableModel.getValueAt(modelRow, COL_FIXED_OVERTIME)));
+        payroll.setBonus(parseValueToBigDecimal(tableModel.getValueAt(modelRow, COL_BONUS)));
+        payroll.setOtherAllowance(parseValueToBigDecimal(tableModel.getValueAt(modelRow, COL_OTHER_ALLOWANCE)));
+        payroll.setMealAllowance(parseValueToBigDecimal(tableModel.getValueAt(modelRow, COL_MEAL_ALLOWANCE)));
+        payroll.setVehicleMaintenanceFee(parseValueToBigDecimal(tableModel.getValueAt(modelRow, COL_VEHICLE_FEE)));
+        payroll.setResearchDevelopmentExpense(parseValueToBigDecimal(tableModel.getValueAt(modelRow, COL_RESEARCH_EXPENSE)));
+        payroll.setChildcareAllowance(parseValueToBigDecimal(tableModel.getValueAt(modelRow, COL_CHILDCARE_ALLOWANCE)));
         return payroll;
     }
 
